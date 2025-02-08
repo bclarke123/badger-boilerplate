@@ -5,7 +5,7 @@ use super::CURRENT_IMAGE;
 static NUMBER_OF_IMAGES: u8 = 3;
 static FERRIS_IMG: &[u8; 15722] = include_bytes!("../../images/ferris_w_a_knife.bmp");
 static REPO_IMG: &[u8; 11262] = include_bytes!("../../images/repo.bmp");
-static MTRAS_LOGO: &[u8; 10378] = include_bytes!("../../images/mtras_logo.bmp");
+static MTRAS_LOGO: &[u8; 11162] = include_bytes!("../../images/mtras_logo.bmp");
 
 pub enum DisplayImage {
     Ferris = 0,
