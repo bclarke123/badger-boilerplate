@@ -7,7 +7,7 @@
 //! a convenient set_time() function could be added (sets only seconds, minutes and hours)
 
 use super::{DEVICE_ADDRESS, Error, PCF85063, Register, decode_bcd, encode_bcd};
-use embedded_hal_async::i2c::I2c;
+use embedded_hal_1::i2c::I2c;
 use time::{Date, PrimitiveDateTime, Time};
 
 impl<I2C, E> PCF85063<I2C>
@@ -15,11 +15,10 @@ where
     I2C: I2c<Error = E>,
 {
     /// Read date and time all at once.
-    pub async fn get_datetime(&mut self) -> Result<PrimitiveDateTime, Error<E>> {
+    pub fn get_datetime(&mut self) -> Result<PrimitiveDateTime, Error<E>> {
         let mut data = [0; 7];
         self.i2c
             .write_read(DEVICE_ADDRESS, &[Register::SECONDS], &mut data)
-            .await
             .map_err(Error::I2C)?;
 
         Ok(PrimitiveDateTime::new(
@@ -37,7 +36,7 @@ where
     }
 
     /// Set date and time all at once.
-    pub async fn set_datetime(&mut self, datetime: &PrimitiveDateTime) -> Result<(), Error<E>> {
+    pub fn set_datetime(&mut self, datetime: &PrimitiveDateTime) -> Result<(), Error<E>> {
         let payload = [
             Register::SECONDS, //first register
             encode_bcd(datetime.second()),
@@ -50,14 +49,13 @@ where
         ];
         self.i2c
             .write(DEVICE_ADDRESS, &payload)
-            .await
             .map_err(Error::I2C)
     }
 
     /// Set only the time, date remains unchanged.
     ///
     /// Will return an 'Error::InvalidInputData' if any of the parameters is out of range.
-    pub async fn set_time(&mut self, time: &Time) -> Result<(), Error<E>> {
+    pub fn set_time(&mut self, time: &Time) -> Result<(), Error<E>> {
         let payload = [
             Register::SECONDS, //first register
             encode_bcd(time.second()),
@@ -66,7 +64,6 @@ where
         ];
         self.i2c
             .write(DEVICE_ADDRESS, &payload)
-            .await
             .map_err(Error::I2C)
     }
 }
