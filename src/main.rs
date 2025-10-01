@@ -1,7 +1,3 @@
-//! This example test the RP Pico W on board LED.
-//!
-//! It does not work with the RP Pico board.
-
 #![no_std]
 #![no_main]
 
@@ -17,6 +13,7 @@ use cyw43::JoinOptions;
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use defmt::info;
 use defmt::*;
+use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_net::StackResources;
 use embassy_net::dns::DnsSocket;
@@ -39,6 +36,7 @@ use env::env_value;
 use gpio::{Level, Output, Pull};
 use heapless::{String, Vec};
 use helpers::easy_format;
+use pcf85063a::PCF85063;
 use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
 use reqwless::request::Method;
 use save::{Save, read_postcard_from_flash, save_postcard_to_flash};
@@ -50,6 +48,7 @@ use {defmt_rtt as _, panic_probe as _};
 mod badge_display;
 mod env;
 mod helpers;
+mod pcf85063a;
 mod save;
 mod temp_sensor;
 
@@ -213,82 +212,85 @@ async fn main(spawner: Spawner) {
             &mut tls_write_buffer,
             TlsVerify::None,
         );
-
+        // let mut http_client = HttpClient::new(&tcp_client, &dns_client);
         let mut http_client = HttpClient::new_with_tls(&tcp_client, &dns_client, tls_config);
+
         let url = env_value("TIME_API");
         info!("connecting to {}", &url);
 
-        let mut request = match http_client.request(Method::GET, &url).await {
-            Ok(req) => req,
+        //If the call goes through set the rtc
+        match http_client.request(Method::GET, &url).await {
+            Ok(mut request) => {
+                let response = match request.send(&mut rx_buffer).await {
+                    Ok(resp) => resp,
+                    Err(e) => {
+                        error!("Failed to send HTTP request: {:?}", e);
+                        // error!("Failed to send HTTP request");
+                        return; // handle the error;
+                    }
+                };
+
+                let body = match from_utf8(response.body().read_to_end().await.unwrap()) {
+                    Ok(b) => b,
+                    Err(_e) => {
+                        error!("Failed to read response body");
+                        return; // handle the error
+                    }
+                };
+                info!("Response body: {:?}", &body);
+
+                let bytes = body.as_bytes();
+                match serde_json_core::de::from_slice::<TimeApiResponse>(bytes) {
+                    Ok((output, _used)) => {
+                        //Deadlines am i right?
+                        info!("Datetime: {:?}", output.datetime);
+                        //split at T
+                        let datetime = output.datetime.split('T').collect::<Vec<&str, 2>>();
+                        //split at -
+                        let date = datetime[0].split('-').collect::<Vec<&str, 3>>();
+                        let year = date[0].parse::<u16>().unwrap();
+                        let month = date[1].parse::<u8>().unwrap();
+                        let day = date[2].parse::<u8>().unwrap();
+                        //split at :
+                        let time = datetime[1].split(':').collect::<Vec<&str, 4>>();
+                        let hour = time[0].parse::<u8>().unwrap();
+                        let minute = time[1].parse::<u8>().unwrap();
+                        //split at .
+                        let second_split = time[2].split('.').collect::<Vec<&str, 2>>();
+                        let second = second_split[0].parse::<f64>().unwrap();
+                        let rtc_time = DateTime {
+                            year: year,
+                            month: month,
+                            day: day,
+                            day_of_week: match output.day_of_week {
+                                0 => DayOfWeek::Sunday,
+                                1 => DayOfWeek::Monday,
+                                2 => DayOfWeek::Tuesday,
+                                3 => DayOfWeek::Wednesday,
+                                4 => DayOfWeek::Thursday,
+                                5 => DayOfWeek::Friday,
+                                6 => DayOfWeek::Saturday,
+                                _ => DayOfWeek::Sunday,
+                            },
+                            hour,
+                            minute,
+                            second: second as u8,
+                        };
+                        rtc.set_datetime(rtc_time).unwrap();
+                        time_was_set = true;
+                        let _ = control.leave().await;
+                    }
+                    Err(_e) => {
+                        error!("Failed to parse response body");
+                        // return; // handle the error
+                    }
+                }
+            }
             Err(e) => {
                 error!("Failed to make HTTP request: {:?}", e);
-                return; // handle the error
-            }
-        };
-
-        let response = match request.send(&mut rx_buffer).await {
-            Ok(resp) => resp,
-            Err(_e) => {
-                error!("Failed to send HTTP request");
-                return; // handle the error;
-            }
-        };
-
-        let body = match from_utf8(response.body().read_to_end().await.unwrap()) {
-            Ok(b) => b,
-            Err(_e) => {
-                error!("Failed to read response body");
-                return; // handle the error
-            }
-        };
-        info!("Response body: {:?}", &body);
-
-        let bytes = body.as_bytes();
-        match serde_json_core::de::from_slice::<TimeApiResponse>(bytes) {
-            Ok((output, _used)) => {
-                //Deadlines am i right?
-                info!("Datetime: {:?}", output.datetime);
-                //split at T
-                let datetime = output.datetime.split('T').collect::<Vec<&str, 2>>();
-                //split at -
-                let date = datetime[0].split('-').collect::<Vec<&str, 3>>();
-                let year = date[0].parse::<u16>().unwrap();
-                let month = date[1].parse::<u8>().unwrap();
-                let day = date[2].parse::<u8>().unwrap();
-                //split at :
-                let time = datetime[1].split(':').collect::<Vec<&str, 4>>();
-                let hour = time[0].parse::<u8>().unwrap();
-                let minute = time[1].parse::<u8>().unwrap();
-                //split at .
-                let second_split = time[2].split('.').collect::<Vec<&str, 2>>();
-                let second = second_split[0].parse::<f64>().unwrap();
-                let rtc_time = DateTime {
-                    year: year,
-                    month: month,
-                    day: day,
-                    day_of_week: match output.day_of_week {
-                        0 => DayOfWeek::Sunday,
-                        1 => DayOfWeek::Monday,
-                        2 => DayOfWeek::Tuesday,
-                        3 => DayOfWeek::Wednesday,
-                        4 => DayOfWeek::Thursday,
-                        5 => DayOfWeek::Friday,
-                        6 => DayOfWeek::Saturday,
-                        _ => DayOfWeek::Sunday,
-                    },
-                    hour,
-                    minute,
-                    second: second as u8,
-                };
-                rtc.set_datetime(rtc_time).unwrap();
-                time_was_set = true;
-                let _ = control.leave().await;
-            }
-            Err(_e) => {
-                error!("Failed to parse response body");
                 // return; // handle the error
             }
-        }
+        };
     }
 
     //Set up saving
@@ -302,6 +304,9 @@ async fn main(spawner: Spawner) {
     static I2C_BUS: StaticCell<I2c0Bus> = StaticCell::new();
     let i2c_bus = NoopMutex::new(RefCell::new(i2c));
     let i2c_bus = I2C_BUS.init(i2c_bus);
+
+    let i2c_dev = I2cDevice::new(i2c_bus);
+    let mut rtc_device = PCF85063::new(i2c_dev);
 
     //Task spawning
     spawner.must_spawn(run_the_temp_sensor(i2c_bus));
