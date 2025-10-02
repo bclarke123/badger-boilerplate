@@ -9,10 +9,12 @@ use badge_display::{
 use core::cell::RefCell;
 use core::fmt::Write;
 use core::str::from_utf8;
+use cortex_m::asm::delay;
 use cyw43::JoinOptions;
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use defmt::info;
 use defmt::*;
+use embassy_embedded_hal::shared_bus::I2cDeviceError;
 use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_net::StackResources;
@@ -21,7 +23,7 @@ use embassy_net::tcp::client::{TcpClient, TcpClientState};
 use embassy_rp::clocks::RoscRng;
 use embassy_rp::flash::Async;
 use embassy_rp::gpio::Input;
-use embassy_rp::i2c::I2c;
+use embassy_rp::i2c::{Error, I2c};
 use embassy_rp::peripherals::{DMA_CH0, I2C0, PIO0, SPI0};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::rtc::{DateTime, DayOfWeek};
@@ -181,6 +183,16 @@ async fn main(spawner: Spawner) {
         wifi_connection_attempts += 1;
     }
 
+    //Setup i2c bus
+    let config = embassy_rp::i2c::Config::default();
+    let i2c = i2c::I2c::new_blocking(p.I2C0, p.PIN_5, p.PIN_4, config);
+    static I2C_BUS: StaticCell<I2c0Bus> = StaticCell::new();
+    let i2c_bus = NoopMutex::new(RefCell::new(i2c));
+    let i2c_bus = I2C_BUS.init(i2c_bus);
+
+    let i2c_dev = I2cDevice::new(i2c_bus);
+    let mut rtc_device = PCF85063::new(i2c_dev);
+
     let mut time_was_set = false;
     if connected_to_wifi {
         info!("waiting for DHCP...");
@@ -212,6 +224,8 @@ async fn main(spawner: Spawner) {
             &mut tls_write_buffer,
             TlsVerify::None,
         );
+
+        Timer::after(Duration::from_millis(500)).await;
         // let mut http_client = HttpClient::new(&tcp_client, &dns_client);
         let mut http_client = HttpClient::new_with_tls(&tcp_client, &dns_client, tls_config);
 
@@ -276,7 +290,26 @@ async fn main(spawner: Spawner) {
                             minute,
                             second: second as u8,
                         };
-                        rtc.set_datetime(rtc_time).unwrap();
+
+                        // // prepare date and time to be set
+                        // let now = DateTime {
+                        //     year: 21,   // 2021
+                        //     month: 4,   // April
+                        //     weekday: 0, // Sunday
+                        //     day: 4,
+                        //     day_of_week: DayOfWeek::Sunday,
+                        //     hour,
+                        //     minute,
+                        //     hours: 16,
+                        //     minutes: 52,
+                        //     seconds: 00,
+                        //     second: 0,
+                        // };
+
+                        rtc_device
+                            .set_datetime(&rtc_time)
+                            .expect("TODO: panic message");
+                        // rtc.set_datetime(rtc_time).unwrap();
                         time_was_set = true;
                         let _ = control.leave().await;
                     }
@@ -295,18 +328,13 @@ async fn main(spawner: Spawner) {
 
     //Set up saving
     let mut flash = embassy_rp::flash::Flash::<_, Async, FLASH_SIZE>::new(p.FLASH, p.DMA_CH3);
-    let mut save: Save = read_postcard_from_flash(ADDR_OFFSET, &mut flash, SAVE_OFFSET).unwrap();
+    //TODO baaaaaad
+    let mut save =
+        read_postcard_from_flash(ADDR_OFFSET, &mut flash, SAVE_OFFSET).unwrap_or_else(|err| {
+            error!("Error getting the save from the flash: {:?}", err);
+            Save::new()
+        });
     WIFI_COUNT.store(save.wifi_counted, core::sync::atomic::Ordering::Relaxed);
-
-    //Setup i2c bus
-    let config = embassy_rp::i2c::Config::default();
-    let i2c = i2c::I2c::new_blocking(p.I2C0, p.PIN_5, p.PIN_4, config);
-    static I2C_BUS: StaticCell<I2c0Bus> = StaticCell::new();
-    let i2c_bus = NoopMutex::new(RefCell::new(i2c));
-    let i2c_bus = I2C_BUS.init(i2c_bus);
-
-    let i2c_dev = I2cDevice::new(i2c_bus);
-    let mut rtc_device = PCF85063::new(i2c_dev);
 
     //Task spawning
     spawner.must_spawn(run_the_temp_sensor(i2c_bus));
@@ -322,6 +350,23 @@ async fn main(spawner: Spawner) {
     user_led.set_low();
 
     loop {
+        //TODO take out
+        Timer::after(Duration::from_millis(5_000)).await;
+
+        let time = rtc_device.get_datetime().unwrap();
+        info!("Hour: {:?}", time.hour());
+        info!("Minute: {:?}", time.minute());
+        info!("Second: {:?}", time.second());
+
+        // match rtc_device.get_datetime() {
+        //     Ok(time) => {
+        //         info!("RTC time: {:?}", time.as_utc().time().minute());
+        //     }
+        //     Err(err) => {
+        //         error!("Error reading rtc");
+        //     }
+        // }
+
         //Change Image Button
         if btn_c.is_high() {
             info!("Button C pressed");

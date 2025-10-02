@@ -60,3 +60,12 @@ pub struct Save {
     pub wifi_counted: u32,
     pub bssid: Vec<String<17>, BSSID_LEN>,
 }
+
+impl Save {
+    pub fn new() -> Self {
+        Self {
+            wifi_counted: 0,
+            bssid: Vec::new(),
+        }
+    }
+}

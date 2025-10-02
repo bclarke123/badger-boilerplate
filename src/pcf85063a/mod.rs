@@ -1,7 +1,6 @@
-#![no_std]
-
-mod alarm;
-mod datetime;
+#![allow(dead_code)]
+pub mod alarm;
+pub mod datetime;
 
 use embedded_hal_1::i2c::I2c;
 

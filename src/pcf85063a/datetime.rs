@@ -7,6 +7,7 @@
 //! a convenient set_time() function could be added (sets only seconds, minutes and hours)
 
 use super::{DEVICE_ADDRESS, Error, PCF85063, Register, decode_bcd, encode_bcd};
+use embassy_rp::rtc::DateTime;
 use embedded_hal_1::i2c::I2c;
 use time::{Date, PrimitiveDateTime, Time};
 
@@ -36,20 +37,19 @@ where
     }
 
     /// Set date and time all at once.
-    pub fn set_datetime(&mut self, datetime: &PrimitiveDateTime) -> Result<(), Error<E>> {
+    pub fn set_datetime(&mut self, datetime: &DateTime) -> Result<(), Error<E>> {
         let payload = [
             Register::SECONDS, //first register
-            encode_bcd(datetime.second()),
-            encode_bcd(datetime.minute()),
-            encode_bcd(datetime.hour()),
-            encode_bcd(datetime.day()),
-            encode_bcd(datetime.weekday().number_days_from_sunday()),
-            encode_bcd(datetime.month().into()),
-            encode_bcd((datetime.year() - 2000) as u8),
+            encode_bcd(datetime.second),
+            encode_bcd(datetime.minute),
+            encode_bcd(datetime.hour),
+            encode_bcd(datetime.day),
+            //Not sure if this is correct
+            encode_bcd(datetime.day_of_week as u8),
+            encode_bcd(datetime.month),
+            encode_bcd((datetime.year - 2000) as u8),
         ];
-        self.i2c
-            .write(DEVICE_ADDRESS, &payload)
-            .map_err(Error::I2C)
+        self.i2c.write(DEVICE_ADDRESS, &payload).map_err(Error::I2C)
     }
 
     /// Set only the time, date remains unchanged.
@@ -62,8 +62,6 @@ where
             encode_bcd(time.minute()),
             encode_bcd(time.hour()),
         ];
-        self.i2c
-            .write(DEVICE_ADDRESS, &payload)
-            .map_err(Error::I2C)
+        self.i2c.write(DEVICE_ADDRESS, &payload).map_err(Error::I2C)
     }
 }
