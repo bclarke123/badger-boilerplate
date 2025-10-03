@@ -28,6 +28,7 @@ use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::rtc::{DateTime, DayOfWeek};
 use embassy_rp::spi::Spi;
 use embassy_rp::spi::{self};
+use embassy_rp::watchdog::Watchdog;
 use embassy_rp::{bind_interrupts, gpio, i2c};
 use embassy_sync::blocking_mutex::NoopMutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -123,6 +124,7 @@ async fn main(spawner: Spawner) {
     let btn_b = Input::new(p.PIN_13, Pull::Down);
     let btn_c = Input::new(p.PIN_14, Pull::Down);
     let rtc_alarm = Input::new(p.PIN_8, Pull::Down);
+    let mut watchdog = Watchdog::new(p.WATCHDOG);
 
     //Setup i2c bus
     let config = embassy_rp::i2c::Config::default();
@@ -172,6 +174,9 @@ async fn main(spawner: Spawner) {
         seed,
     );
 
+    //If the watch dog isn't fed in 60 seconds reboot to help with hang up
+    watchdog.start(Duration::from_secs(8));
+
     spawner.must_spawn(net_task(runner));
     //Attempt to connect to wifi to get RTC time loop for 2 minutes
     let mut wifi_connection_attempts = 0;
@@ -180,6 +185,7 @@ async fn main(spawner: Spawner) {
     let wifi_ssid = env_value("WIFI_SSID");
     let wifi_password = env_value("WIFI_PASSWORD");
     while wifi_connection_attempts < 30 {
+        watchdog.feed();
         match control
             .join(wifi_ssid, JoinOptions::new(wifi_password.as_bytes()))
             .await
@@ -198,6 +204,8 @@ async fn main(spawner: Spawner) {
     }
 
     if connected_to_wifi {
+        //Feed the dog if it makes it this far
+        watchdog.feed();
         info!("waiting for DHCP...");
         while !stack.is_config_up() {
             Timer::after_millis(100).await;
@@ -234,6 +242,9 @@ async fn main(spawner: Spawner) {
 
         let url = env_value("TIME_API");
         info!("connecting to {}", &url);
+
+        // Feeds the dog again for one last time
+        watchdog.feed();
 
         //If the call goes through set the rtc
         match http_client.request(Method::GET, &url).await {
@@ -334,7 +345,7 @@ async fn main(spawner: Spawner) {
     let reset_cycle = 3_000;
 
     //Turn off led to signify that the badge is ready
-    user_led.set_low();
+    // user_led.set_low();
 
     //RTC alarm stuff
     let mut go_to_sleep = false;
@@ -353,6 +364,9 @@ async fn main(spawner: Spawner) {
     }
 
     loop {
+        //Keep feeding the dog
+        watchdog.feed();
+
         //Change Image Button
         if btn_c.is_high() {
             info!("Button C pressed");
@@ -486,8 +500,8 @@ async fn main(spawner: Spawner) {
             //goes to sleep for 15 mins
             _ = rtc_device.disable_all_alarms();
             _ = rtc_device.clear_alarm_flag();
-            _ = rtc_device.set_alarm_seconds(5);
-            _ = rtc_device.control_alarm_seconds(Control::On);
+            _ = rtc_device.set_alarm_minutes(15);
+            _ = rtc_device.control_alarm_minutes(Control::On);
             _ = rtc_device.control_alarm_interrupt(Control::On);
             power.set_low();
         }
