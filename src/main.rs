@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+use crate::pcf85063a::Control;
 use badge_display::display_image::DisplayImage;
 use badge_display::{
     CHANGE_IMAGE, CURRENT_IMAGE, DISPLAY_CHANGED, FORCE_SCREEN_REFRESH, RECENT_WIFI_NETWORKS,
@@ -45,6 +46,7 @@ use save::{Save, read_postcard_from_flash, save_postcard_to_flash};
 use serde::Deserialize;
 use static_cell::StaticCell;
 use temp_sensor::run_the_temp_sensor;
+use time::PrimitiveDateTime;
 use {defmt_rtt as _, panic_probe as _};
 
 mod badge_display;
@@ -122,6 +124,7 @@ async fn main(spawner: Spawner) {
     let btn_a = Input::new(p.PIN_12, Pull::Down);
     let btn_b = Input::new(p.PIN_13, Pull::Down);
     let btn_c = Input::new(p.PIN_14, Pull::Down);
+    let rtc_alarm = Input::new(p.PIN_8, Pull::Down);
 
     let spi = Spi::new(
         p.SPI0,
@@ -156,7 +159,7 @@ async fn main(spawner: Spawner) {
     );
 
     //rtc setup
-    let mut rtc = embassy_rp::rtc::Rtc::new(p.RTC);
+    // let mut rtc = embassy_rp::rtc::Rtc::new(p.RTC);
 
     spawner.must_spawn(net_task(runner));
     //Attempt to connect to wifi to get RTC time loop for 2 minutes
@@ -193,7 +196,6 @@ async fn main(spawner: Spawner) {
     let i2c_dev = I2cDevice::new(i2c_bus);
     let mut rtc_device = PCF85063::new(i2c_dev);
 
-    let mut time_was_set = false;
     if connected_to_wifi {
         info!("waiting for DHCP...");
         while !stack.is_config_up() {
@@ -291,27 +293,9 @@ async fn main(spawner: Spawner) {
                             second: second as u8,
                         };
 
-                        // // prepare date and time to be set
-                        // let now = DateTime {
-                        //     year: 21,   // 2021
-                        //     month: 4,   // April
-                        //     weekday: 0, // Sunday
-                        //     day: 4,
-                        //     day_of_week: DayOfWeek::Sunday,
-                        //     hour,
-                        //     minute,
-                        //     hours: 16,
-                        //     minutes: 52,
-                        //     seconds: 00,
-                        //     second: 0,
-                        // };
-
                         rtc_device
                             .set_datetime(&rtc_time)
                             .expect("TODO: panic message");
-                        // rtc.set_datetime(rtc_time).unwrap();
-                        time_was_set = true;
-                        let _ = control.leave().await;
                     }
                     Err(_e) => {
                         error!("Failed to parse response body");
@@ -324,11 +308,12 @@ async fn main(spawner: Spawner) {
                 // return; // handle the error
             }
         };
+        //leave the wifi no longer needed
+        let _ = control.leave().await;
     }
 
     //Set up saving
     let mut flash = embassy_rp::flash::Flash::<_, Async, FLASH_SIZE>::new(p.FLASH, p.DMA_CH3);
-    //TODO baaaaaad
     let mut save =
         read_postcard_from_flash(ADDR_OFFSET, &mut flash, SAVE_OFFSET).unwrap_or_else(|err| {
             error!("Error getting the save from the flash: {:?}", err);
@@ -344,29 +329,24 @@ async fn main(spawner: Spawner) {
     let cycle = Duration::from_millis(100);
     let mut current_cycle = 0;
     let mut time_to_scan = true;
-    //5 minutes(ish) idk it's late and my math is so bad rn
-    let reset_cycle = 3_000;
+    //15 minutes(ish) idk it's late and my math is so bad rn
+    let reset_cycle = 9_000;
+
     //Turn off led to signify that the badge is ready
     user_led.set_low();
 
+    //RTC alarm stuff
+    // info!("going to sleep");
+    // Timer::after(Duration::from_millis(5_000)).await;
+    // //Set the rtc and sleep for 15 minutes
+    // //goes to sleep for 15 mins
+    // _ = rtc_device.clear_alarm_flag();
+    // _ = rtc_device.set_alarm_minutes(5);
+    // _ = rtc_device.control_alarm_minutes(Control::On);
+    // _ = rtc_device.control_alarm_interrupt(Control::On);
+    // power.set_low();
+
     loop {
-        //TODO take out
-        Timer::after(Duration::from_millis(5_000)).await;
-
-        let time = rtc_device.get_datetime().unwrap();
-        info!("Hour: {:?}", time.hour());
-        info!("Minute: {:?}", time.minute());
-        info!("Second: {:?}", time.second());
-
-        // match rtc_device.get_datetime() {
-        //     Ok(time) => {
-        //         info!("RTC time: {:?}", time.as_utc().time().minute());
-        //     }
-        //     Err(err) => {
-        //         error!("Error reading rtc");
-        //     }
-        // }
-
         //Change Image Button
         if btn_c.is_high() {
             info!("Button C pressed");
@@ -408,7 +388,6 @@ async fn main(spawner: Spawner) {
 
         if btn_b.is_high() {
             info!("Button B pressed");
-
             SCREEN_TO_SHOW.lock(|screen| {
                 if *screen.borrow() == Screen::Badge {
                     //IF on badge screen and b pressed reset wifi count
@@ -455,20 +434,17 @@ async fn main(spawner: Spawner) {
             continue;
         }
 
-        if time_was_set {
-            let now = rtc.now();
-            match now {
-                Ok(time) => set_display_time(time),
-                Err(_) => {
-                    info!("Error getting time");
-                }
+        match rtc_device.get_datetime() {
+            Ok(now) => set_display_time(now),
+            Err(_err) => {
+                error!("Error getting time");
+                RTC_TIME_STRING.lock(|rtc_time_string| {
+                    rtc_time_string.borrow_mut().clear();
+                    rtc_time_string.borrow_mut().push_str("Error").unwrap();
+                });
             }
-        } else {
-            RTC_TIME_STRING.lock(|rtc_time_string| {
-                rtc_time_string.borrow_mut().clear();
-                rtc_time_string.borrow_mut().push_str("No Wifi").unwrap();
-            });
-        }
+        };
+
         if time_to_scan {
             info!("Scanning for wifi networks");
             time_to_scan = false;
@@ -489,22 +465,27 @@ async fn main(spawner: Spawner) {
     }
 }
 
-fn set_display_time(time: DateTime) {
+fn set_display_time(time: PrimitiveDateTime) {
     let mut am = true;
-    let twelve_hour = if time.hour > 12 {
-        am = false;
-        time.hour - 12
-    } else if time.hour == 0 {
+    let twelve_hour = if time.hour() == 0 {
         12
+    } else if time.hour() == 12 {
+        am = false;
+        12
+    } else if time.hour() > 12 {
+        am = false;
+        time.hour() - 12
     } else {
-        time.hour
+        time.hour()
     };
 
     let am_pm = if am { "AM" } else { "PM" };
 
     let formatted_time = easy_format::<8>(format_args!(
         "{:02}:{:02} {}",
-        twelve_hour, time.minute, am_pm
+        twelve_hour,
+        time.minute(),
+        am_pm
     ));
 
     RTC_TIME_STRING.lock(|rtc_time_string| {
