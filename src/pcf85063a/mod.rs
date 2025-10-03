@@ -1,12 +1,14 @@
 #![allow(dead_code)]
+
+///None of this code is mine. It's https://crates.io/crates/pcf85063a
+/// I just needed a synchronous version so did a local clone and pulled the async and awaits
 pub mod alarm;
 pub mod datetime;
 
 use embedded_hal_1::i2c::I2c;
 
 /// All possible errors in this crate
-#[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug, defmt::Format)]
 pub enum Error<E> {
     /// I2C bus error
     I2C(E),
@@ -80,8 +82,7 @@ const DEVICE_ADDRESS: u8 = 0b1010001;
 
 /// Two possible choices, used for various enable/disable bit flags
 #[allow(non_camel_case_types)]
-#[derive(Copy, Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, defmt::Format)]
 pub enum Control {
     /// Enable some feature, eg. timer
     On,
@@ -90,8 +91,7 @@ pub enum Control {
 }
 
 /// PCF8563 driver
-#[derive(Debug, Default)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug, Default, defmt::Format)]
 pub struct PCF85063<I2C> {
     /// The concrete I2C device implementation.
     i2c: I2C,
@@ -193,8 +193,7 @@ where
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
 #[repr(u8)]
 pub enum OutputFrequency {
     Hz32768 = 0b000,

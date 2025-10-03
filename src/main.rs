@@ -10,12 +10,10 @@ use badge_display::{
 use core::cell::RefCell;
 use core::fmt::Write;
 use core::str::from_utf8;
-use cortex_m::asm::delay;
 use cyw43::JoinOptions;
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use defmt::info;
 use defmt::*;
-use embassy_embedded_hal::shared_bus::I2cDeviceError;
 use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_net::StackResources;
@@ -24,7 +22,7 @@ use embassy_net::tcp::client::{TcpClient, TcpClientState};
 use embassy_rp::clocks::RoscRng;
 use embassy_rp::flash::Async;
 use embassy_rp::gpio::Input;
-use embassy_rp::i2c::{Error, I2c};
+use embassy_rp::i2c::I2c;
 use embassy_rp::peripherals::{DMA_CH0, I2C0, PIO0, SPI0};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::rtc::{DateTime, DayOfWeek};
@@ -126,6 +124,22 @@ async fn main(spawner: Spawner) {
     let btn_c = Input::new(p.PIN_14, Pull::Down);
     let rtc_alarm = Input::new(p.PIN_8, Pull::Down);
 
+    //Setup i2c bus
+    let config = embassy_rp::i2c::Config::default();
+    let i2c = i2c::I2c::new_blocking(p.I2C0, p.PIN_5, p.PIN_4, config);
+    static I2C_BUS: StaticCell<I2c0Bus> = StaticCell::new();
+    let i2c_bus = NoopMutex::new(RefCell::new(i2c));
+    let i2c_bus = I2C_BUS.init(i2c_bus);
+
+    let i2c_dev = I2cDevice::new(i2c_bus);
+    let mut rtc_device = PCF85063::new(i2c_dev);
+
+    if btn_a.is_high() {
+        //Clears the alarm on start if A button is pressed (manual start)
+        _ = rtc_device.disable_all_alarms();
+        _ = rtc_device.clear_alarm_flag();
+    }
+
     let spi = Spi::new(
         p.SPI0,
         clk,
@@ -158,9 +172,6 @@ async fn main(spawner: Spawner) {
         seed,
     );
 
-    //rtc setup
-    // let mut rtc = embassy_rp::rtc::Rtc::new(p.RTC);
-
     spawner.must_spawn(net_task(runner));
     //Attempt to connect to wifi to get RTC time loop for 2 minutes
     let mut wifi_connection_attempts = 0;
@@ -185,16 +196,6 @@ async fn main(spawner: Spawner) {
         Timer::after(Duration::from_secs(1)).await;
         wifi_connection_attempts += 1;
     }
-
-    //Setup i2c bus
-    let config = embassy_rp::i2c::Config::default();
-    let i2c = i2c::I2c::new_blocking(p.I2C0, p.PIN_5, p.PIN_4, config);
-    static I2C_BUS: StaticCell<I2c0Bus> = StaticCell::new();
-    let i2c_bus = NoopMutex::new(RefCell::new(i2c));
-    let i2c_bus = I2C_BUS.init(i2c_bus);
-
-    let i2c_dev = I2cDevice::new(i2c_bus);
-    let mut rtc_device = PCF85063::new(i2c_dev);
 
     if connected_to_wifi {
         info!("waiting for DHCP...");
@@ -329,27 +330,33 @@ async fn main(spawner: Spawner) {
     let cycle = Duration::from_millis(100);
     let mut current_cycle = 0;
     let mut time_to_scan = true;
-    //15 minutes(ish) idk it's late and my math is so bad rn
-    let reset_cycle = 9_000;
+    //5 minutes(ish) idk it's late and my math is so bad rn
+    let reset_cycle = 3_000;
 
     //Turn off led to signify that the badge is ready
     user_led.set_low();
 
     //RTC alarm stuff
-    // info!("going to sleep");
-    // Timer::after(Duration::from_millis(5_000)).await;
-    // //Set the rtc and sleep for 15 minutes
-    // //goes to sleep for 15 mins
-    // _ = rtc_device.clear_alarm_flag();
-    // _ = rtc_device.set_alarm_minutes(5);
-    // _ = rtc_device.control_alarm_minutes(Control::On);
-    // _ = rtc_device.control_alarm_interrupt(Control::On);
-    // power.set_low();
+    let mut go_to_sleep = false;
+    let mut reset_cycles_till_sleep = 0;
+    //Like 15ish mins??
+    let sleep_after_cycles = 4;
+
+    if rtc_alarm.is_high() {
+        //sleep happened
+        go_to_sleep = true;
+        info!("Alarm went off");
+        _ = rtc_device.disable_all_alarms();
+        _ = rtc_device.clear_alarm_flag();
+    } else {
+        info!("Alarm was clear")
+    }
 
     loop {
         //Change Image Button
         if btn_c.is_high() {
             info!("Button C pressed");
+            reset_cycles_till_sleep = 0;
             let current_image = CURRENT_IMAGE.load(core::sync::atomic::Ordering::Relaxed);
             let new_image = DisplayImage::from_u8(current_image).unwrap().next();
             CURRENT_IMAGE.store(new_image.as_u8(), core::sync::atomic::Ordering::Relaxed);
@@ -361,6 +368,7 @@ async fn main(spawner: Spawner) {
         if btn_a.is_high() {
             println!("{:?}", current_cycle);
             info!("Button A pressed");
+            reset_cycles_till_sleep = 0;
             user_led.toggle();
             Timer::after(Duration::from_millis(500)).await;
             continue;
@@ -368,6 +376,7 @@ async fn main(spawner: Spawner) {
 
         if btn_down.is_high() {
             info!("Button Down pressed");
+            reset_cycles_till_sleep = 0;
             SCREEN_TO_SHOW.lock(|screen| {
                 screen.replace(Screen::WifiList);
             });
@@ -378,6 +387,7 @@ async fn main(spawner: Spawner) {
 
         if btn_up.is_high() {
             info!("Button Up pressed");
+            reset_cycles_till_sleep = 0;
             SCREEN_TO_SHOW.lock(|screen| {
                 screen.replace(Screen::Badge);
             });
@@ -388,6 +398,7 @@ async fn main(spawner: Spawner) {
 
         if btn_b.is_high() {
             info!("Button B pressed");
+            reset_cycles_till_sleep = 0;
             SCREEN_TO_SHOW.lock(|screen| {
                 if *screen.borrow() == Screen::Badge {
                     //IF on badge screen and b pressed reset wifi count
@@ -447,6 +458,7 @@ async fn main(spawner: Spawner) {
 
         if time_to_scan {
             info!("Scanning for wifi networks");
+            reset_cycles_till_sleep += 1;
             time_to_scan = false;
             let mut scanner = control.scan(Default::default()).await;
             while let Some(bss) = scanner.next().await {
@@ -460,6 +472,26 @@ async fn main(spawner: Spawner) {
             current_cycle = 0;
             time_to_scan = true;
         }
+
+        if reset_cycles_till_sleep >= sleep_after_cycles {
+            info!("Going to sleep");
+            reset_cycles_till_sleep = 0;
+            go_to_sleep = true;
+        }
+
+        if go_to_sleep {
+            info!("going to sleep");
+            Timer::after(Duration::from_secs(25)).await;
+            //Set the rtc and sleep for 15 minutes
+            //goes to sleep for 15 mins
+            _ = rtc_device.disable_all_alarms();
+            _ = rtc_device.clear_alarm_flag();
+            _ = rtc_device.set_alarm_seconds(5);
+            _ = rtc_device.control_alarm_seconds(Control::On);
+            _ = rtc_device.control_alarm_interrupt(Control::On);
+            power.set_low();
+        }
+
         current_cycle += 1;
         Timer::after(cycle).await;
     }
