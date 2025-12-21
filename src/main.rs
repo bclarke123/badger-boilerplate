@@ -49,6 +49,8 @@ mod helpers;
 mod http;
 mod pcf85063a;
 mod save;
+
+#[cfg(feature = "temp_sensor")]
 mod temp_sensor;
 
 type Spi0Bus = Mutex<NoopRawMutex, Spi<'static, SPI0, spi::Async>>;
@@ -274,7 +276,9 @@ async fn main(spawner: Spawner) {
     WIFI_COUNT.store(save.wifi_counted, core::sync::atomic::Ordering::Relaxed);
 
     //Task spawning
-    // spawner.must_spawn(run_the_temp_sensor(i2c_bus));
+    #[cfg(feature = "temp_sensor")]
+    spawner.must_spawn(temp_sensor::run_the_temp_sensor(i2c_bus));
+
     spawner.must_spawn(run_the_display(spi_bus, cs, dc, busy, reset));
 
     //Input loop
