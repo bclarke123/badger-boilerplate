@@ -2,19 +2,17 @@
 #![no_main]
 
 use crate::http::http_get;
-use crate::pcf85063a::Control;
 use badge_display::display_image::DisplayImage;
 use badge_display::{
     CHANGE_IMAGE, CURRENT_IMAGE, DISPLAY_CHANGED, FORCE_SCREEN_REFRESH, RECENT_WIFI_NETWORKS,
     RTC_TIME_STRING, RecentWifiNetworksVec, SCREEN_TO_SHOW, Screen, WIFI_COUNT, run_the_display,
 };
-use core::cell::RefCell;
 use core::fmt::Write;
 use cyw43::JoinOptions;
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use defmt::info;
 use defmt::*;
-use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
+use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_net::StackResources;
 use embassy_rp::clocks::RoscRng;
@@ -23,12 +21,10 @@ use embassy_rp::gpio::Input;
 use embassy_rp::i2c::I2c;
 use embassy_rp::peripherals::{DMA_CH0, I2C0, PIO0, SPI0};
 use embassy_rp::pio::Pio;
-use embassy_rp::rtc::{DateTime, DayOfWeek};
 use embassy_rp::spi::Spi;
 use embassy_rp::spi::{self};
 use embassy_rp::watchdog::Watchdog;
 use embassy_rp::{bind_interrupts, gpio, i2c};
-use embassy_sync::blocking_mutex::NoopMutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
@@ -36,25 +32,21 @@ use env::env_value;
 use gpio::{Level, Output, Pull};
 use heapless::{String, Vec};
 use helpers::easy_format;
-use pcf85063a::PCF85063;
+use pcf85063a::{Control, PCF85063};
 use save::{Save, read_postcard_from_flash, save_postcard_to_flash};
 use serde::Deserialize;
 use static_cell::StaticCell;
-use time::PrimitiveDateTime;
+use time::{Date, Month, PrimitiveDateTime, Time};
 use {defmt_rtt as _, panic_probe as _};
 
 mod badge_display;
 mod env;
 mod helpers;
 mod http;
-mod pcf85063a;
 mod save;
 
-#[cfg(feature = "temp_sensor")]
-mod temp_sensor;
-
 type Spi0Bus = Mutex<NoopRawMutex, Spi<'static, SPI0, spi::Async>>;
-type I2c0Bus = NoopMutex<RefCell<I2c<'static, I2C0, i2c::Async>>>;
+type I2c0Bus = Mutex<NoopRawMutex, I2c<'static, I2C0, i2c::Async>>;
 
 const BSSID_LEN: usize = 1_000;
 const ADDR_OFFSET: u32 = 0x100000;
@@ -139,7 +131,7 @@ async fn main(spawner: Spawner) {
     let config = embassy_rp::i2c::Config::default();
     let i2c = i2c::I2c::new_async(p.I2C0, p.PIN_5, p.PIN_4, Irqs, config);
     static I2C_BUS: StaticCell<I2c0Bus> = StaticCell::new();
-    let i2c_bus = NoopMutex::new(RefCell::new(i2c));
+    let i2c_bus = Mutex::new(i2c);
     let i2c_bus = I2C_BUS.init(i2c_bus);
 
     let i2c_dev = I2cDevice::new(i2c_bus);
@@ -243,9 +235,9 @@ async fn main(spawner: Spawner) {
             Ok(bytes) => {
                 match serde_json_core::de::from_slice::<TimeApiResponse>(bytes) {
                     Ok((output, _used)) => {
-                        //Deadlines am i right?
                         rtc_device
                             .set_datetime(&output.into())
+                            .await
                             .expect("TODO: panic message");
 
                         blink(&mut user_led, 4).await;
@@ -275,10 +267,6 @@ async fn main(spawner: Spawner) {
             Save::new()
         });
     WIFI_COUNT.store(save.wifi_counted, core::sync::atomic::Ordering::Relaxed);
-
-    //Task spawning
-    #[cfg(feature = "temp_sensor")]
-    spawner.must_spawn(temp_sensor::run_the_temp_sensor(i2c_bus));
 
     spawner.must_spawn(run_the_display(spi_bus, cs, dc, busy, reset));
 
@@ -401,7 +389,7 @@ async fn main(spawner: Spawner) {
             continue;
         }
 
-        match rtc_device.get_datetime() {
+        match rtc_device.get_datetime().await {
             Ok(now) => set_display_time(now),
             Err(_err) => {
                 error!("Error getting time");
@@ -500,17 +488,16 @@ async fn cyw43_task(
 #[derive(Deserialize)]
 struct TimeApiResponse<'a> {
     datetime: &'a str,
-    day_of_week: u8,
 }
 
-impl<'a> From<TimeApiResponse<'a>> for DateTime {
+impl<'a> From<TimeApiResponse<'a>> for PrimitiveDateTime {
     fn from(response: TimeApiResponse) -> Self {
         info!("Datetime: {:?}", response.datetime);
         //split at T
         let datetime = response.datetime.split('T').collect::<Vec<&str, 2>>();
         //split at -
         let date = datetime[0].split('-').collect::<Vec<&str, 3>>();
-        let year = date[0].parse::<u16>().unwrap();
+        let year = date[0].parse::<i32>().unwrap();
         let month = date[1].parse::<u8>().unwrap();
         let day = date[2].parse::<u8>().unwrap();
         //split at :
@@ -519,27 +506,12 @@ impl<'a> From<TimeApiResponse<'a>> for DateTime {
         let minute = time[1].parse::<u8>().unwrap();
         //split at .
         let second_split = time[2].split('.').collect::<Vec<&str, 2>>();
-        let second = second_split[0].parse::<f64>().unwrap();
-        let rtc_time = DateTime {
-            year: year,
-            month: month,
-            day: day,
-            day_of_week: match response.day_of_week {
-                0 => DayOfWeek::Sunday,
-                1 => DayOfWeek::Monday,
-                2 => DayOfWeek::Tuesday,
-                3 => DayOfWeek::Wednesday,
-                4 => DayOfWeek::Thursday,
-                5 => DayOfWeek::Friday,
-                6 => DayOfWeek::Saturday,
-                _ => DayOfWeek::Sunday,
-            },
-            hour,
-            minute,
-            second: second as u8,
-        };
+        let second = second_split[0].parse::<u8>().unwrap();
 
-        rtc_time
+        let date = Date::from_calendar_date(year, Month::try_from(month).unwrap(), day).unwrap();
+        let time = Time::from_hms(hour, minute, second).unwrap();
+
+        PrimitiveDateTime::new(date, time)
     }
 }
 
