@@ -32,7 +32,7 @@ use env::env_value;
 use gpio::{Level, Output, Pull};
 use heapless::{String, Vec};
 use helpers::easy_format;
-use pcf85063a::{Control, PCF85063};
+use pcf85063a::PCF85063;
 use save::{Save, read_postcard_from_flash, save_postcard_to_flash};
 use serde::Deserialize;
 use static_cell::StaticCell;
@@ -123,7 +123,6 @@ async fn main(spawner: Spawner) {
     let btn_a = Input::new(p.PIN_12, Pull::Down);
     let btn_b = Input::new(p.PIN_13, Pull::Down);
     let btn_c = Input::new(p.PIN_14, Pull::Down);
-    let rtc_alarm = Input::new(p.PIN_8, Pull::Down);
     let mut watchdog = Watchdog::new(p.WATCHDOG);
 
     //Setup i2c bus
@@ -277,22 +276,6 @@ async fn main(spawner: Spawner) {
     //5 minutes(ish) idk it's late and my math is so bad rn
     let reset_cycle = 3_000;
 
-    //RTC alarm stuff
-    let mut go_to_sleep = false;
-    let mut reset_cycles_till_sleep = 0;
-    //Like 15ish mins??
-    let sleep_after_cycles = 4;
-
-    if rtc_alarm.is_high() {
-        //sleep happened
-        go_to_sleep = true;
-        info!("Alarm went off");
-        _ = rtc_device.disable_all_alarms();
-        _ = rtc_device.clear_alarm_flag();
-    } else {
-        info!("Alarm was clear")
-    }
-
     loop {
         //Keep feeding the dog
         watchdog.feed();
@@ -300,7 +283,6 @@ async fn main(spawner: Spawner) {
         //Change Image Button
         if btn_c.is_high() {
             info!("Button C pressed");
-            reset_cycles_till_sleep = 0;
             let current_image = CURRENT_IMAGE.load(core::sync::atomic::Ordering::Relaxed);
             let new_image = DisplayImage::from_u8(current_image).unwrap().next();
             CURRENT_IMAGE.store(new_image.as_u8(), core::sync::atomic::Ordering::Relaxed);
@@ -312,7 +294,6 @@ async fn main(spawner: Spawner) {
         if btn_a.is_high() {
             println!("{:?}", current_cycle);
             info!("Button A pressed");
-            reset_cycles_till_sleep = 0;
             user_led.toggle();
             Timer::after(Duration::from_millis(500)).await;
             continue;
@@ -320,7 +301,6 @@ async fn main(spawner: Spawner) {
 
         if btn_down.is_high() {
             info!("Button Down pressed");
-            reset_cycles_till_sleep = 0;
 
             DISPLAY_CHANGED.signal(Screen::WifiList);
 
@@ -330,7 +310,6 @@ async fn main(spawner: Spawner) {
 
         if btn_up.is_high() {
             info!("Button Up pressed");
-            reset_cycles_till_sleep = 0;
 
             DISPLAY_CHANGED.signal(Screen::Badge);
 
@@ -340,7 +319,6 @@ async fn main(spawner: Spawner) {
 
         if btn_b.is_high() {
             info!("Button B pressed");
-            reset_cycles_till_sleep = 0;
 
             DISPLAY_CHANGED.signal(Screen::Badge);
 
@@ -399,7 +377,6 @@ async fn main(spawner: Spawner) {
 
             Timer::after(Duration::from_millis(100)).await;
             info!("Scanning for wifi networks");
-            reset_cycles_till_sleep += 1;
             time_to_scan = false;
 
             {
@@ -419,28 +396,6 @@ async fn main(spawner: Spawner) {
         if current_cycle >= reset_cycle {
             current_cycle = 0;
             time_to_scan = true;
-        }
-
-        if reset_cycles_till_sleep >= sleep_after_cycles {
-            info!("Going to sleep");
-            reset_cycles_till_sleep = 0;
-            go_to_sleep = true;
-        }
-
-        if go_to_sleep {
-            info!("going to sleep");
-            // Timer::after(Duration::from_secs(25)).await;
-            //Set the rtc and sleep for 15 minutes
-            //goes to sleep for 15 mins
-            _ = rtc_device.disable_all_alarms();
-            _ = rtc_device.clear_alarm_flag();
-            _ = rtc_device.set_alarm_minutes(15);
-            _ = rtc_device.control_alarm_minutes(Control::On);
-            _ = rtc_device.control_alarm_interrupt(Control::On);
-            // power_latch.set_low();
-            control
-                .set_power_management(PowerManagementMode::PowerSave)
-                .await;
         }
 
         current_cycle += 1;
