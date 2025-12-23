@@ -3,12 +3,8 @@
 
 use crate::http::http_get;
 use badge_display::display_image::DisplayImage;
-use badge_display::{
-    CURRENT_IMAGE, DISPLAY_CHANGED, RECENT_WIFI_NETWORKS, RTC_TIME, RecentWifiNetworksVec, Screen,
-    WIFI_COUNT, run_the_display,
-};
-use core::fmt::Write;
-use cyw43::{JoinOptions, PowerManagementMode};
+use badge_display::{CURRENT_IMAGE, DISPLAY_CHANGED, RTC_TIME, Screen, run_the_display};
+use cyw43::JoinOptions;
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use defmt::info;
 use defmt::*;
@@ -16,7 +12,6 @@ use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_net::StackResources;
 use embassy_rp::clocks::RoscRng;
-use embassy_rp::flash::Async;
 use embassy_rp::gpio::Input;
 use embassy_rp::i2c::I2c;
 use embassy_rp::peripherals::{DMA_CH0, I2C0, PIO0, SPI0};
@@ -24,15 +19,14 @@ use embassy_rp::pio::Pio;
 use embassy_rp::spi::Spi;
 use embassy_rp::spi::{self};
 use embassy_rp::{bind_interrupts, gpio, i2c};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::raw::{NoopRawMutex, ThreadModeRawMutex};
 use embassy_sync::mutex::Mutex;
+use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
 use env::env_value;
 use gpio::{Level, Output, Pull};
-use heapless::{String, Vec};
-use helpers::easy_format;
+use heapless::Vec;
 use pcf85063a::PCF85063;
-use save::{Save, read_postcard_from_flash, save_postcard_to_flash};
 use serde::Deserialize;
 use static_cell::StaticCell;
 use time::{Date, Month, PrimitiveDateTime, Time};
@@ -42,30 +36,26 @@ mod badge_display;
 mod env;
 mod helpers;
 mod http;
-mod save;
 
 type Spi0Bus = Mutex<NoopRawMutex, Spi<'static, SPI0, spi::Async>>;
-type I2c0Bus = Mutex<NoopRawMutex, I2c<'static, I2C0, i2c::Async>>;
 
-const BSSID_LEN: usize = 1_000;
-const ADDR_OFFSET: u32 = 0x100000;
-const SAVE_OFFSET: u32 = 0x00;
-
-const FLASH_SIZE: usize = 2 * 1024 * 1024;
+type AsyncI2c0 = I2c<'static, I2C0, i2c::Async>;
+type I2c0Bus = Mutex<NoopRawMutex, AsyncI2c0>;
+type SharedI2c = I2cDevice<'static, NoopRawMutex, AsyncI2c0>;
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => embassy_rp::pio::InterruptHandler<embassy_rp::peripherals::PIO0>;
     I2C0_IRQ => embassy_rp::i2c::InterruptHandler<embassy_rp::peripherals::I2C0>;
 });
 
-async fn blink(pin: &mut Output<'_>, n_times: usize) {
-    for _ in 0..n_times {
-        pin.set_high();
-        Timer::after_millis(100).await;
-        pin.set_low();
-        Timer::after_millis(100).await;
-    }
+enum Button {
+    A,
+    B,
+    C,
+    Up,
+    Down,
 }
+static BUTTON_PRESSED: Signal<ThreadModeRawMutex, &'static Button> = Signal::new();
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -102,7 +92,7 @@ async fn main(spawner: Spawner) {
 
     control.init(clm).await;
     control
-        .set_power_management(cyw43::PowerManagementMode::PowerSave)
+        .set_power_management(cyw43::PowerManagementMode::Aggressive)
         .await;
 
     let miso = p.PIN_16;
@@ -133,12 +123,6 @@ async fn main(spawner: Spawner) {
     let i2c_dev = I2cDevice::new(i2c_bus);
     let mut rtc_device = PCF85063::new(i2c_dev);
 
-    if btn_a.is_high() {
-        //Clears the alarm on start if A button is pressed (manual start)
-        _ = rtc_device.disable_all_alarms();
-        _ = rtc_device.clear_alarm_flag();
-    }
-
     let spi = Spi::new(
         p.SPI0,
         clk,
@@ -168,6 +152,7 @@ async fn main(spawner: Spawner) {
     );
 
     spawner.must_spawn(net_task(runner));
+
     //Attempt to connect to wifi to get RTC time loop for 2 minutes
     let mut wifi_connection_attempts = 0;
     let mut connected_to_wifi = false;
@@ -223,10 +208,15 @@ async fn main(spawner: Spawner) {
             Ok(bytes) => {
                 match serde_json_core::de::from_slice::<TimeApiResponse>(bytes) {
                     Ok((output, _used)) => {
+                        let datetime: PrimitiveDateTime = output.into();
+
                         rtc_device
-                            .set_datetime(&output.into())
+                            .set_datetime(&datetime)
                             .await
                             .expect("TODO: panic message");
+
+                        let mut data = RTC_TIME.lock().await;
+                        *data = Some(datetime);
 
                         blink(&mut user_led, 4).await;
                     }
@@ -243,151 +233,28 @@ async fn main(spawner: Spawner) {
                 // return; // handle the error
             }
         };
-        //leave the wifi no longer needed
-        let _ = control.leave().await;
+
+        // control.leave().await;
     }
 
-    //Set up saving
-    let mut flash = embassy_rp::flash::Flash::<_, Async, FLASH_SIZE>::new(p.FLASH, p.DMA_CH3);
-    let mut save =
-        read_postcard_from_flash(ADDR_OFFSET, &mut flash, SAVE_OFFSET).unwrap_or_else(|err| {
-            error!("Error getting the save from the flash: {:?}", err);
-            Save::new()
-        });
-    WIFI_COUNT.store(save.wifi_counted, core::sync::atomic::Ordering::Relaxed);
+    Timer::after_millis(100).await;
 
     DISPLAY_CHANGED.signal(Screen::Badge);
     spawner.must_spawn(run_the_display(spi_bus, cs, dc, busy, reset));
 
-    //Input loop
-    let cycle = Duration::from_millis(100);
-    let mut current_cycle = 0;
-    let mut time_to_scan = true;
-    //5 minutes(ish) idk it's late and my math is so bad rn
-    let reset_cycle = 3_000;
+    Timer::after_millis(500).await;
 
-    loop {
-        //Change Image Button
-        if btn_c.is_high() {
-            info!("Button C pressed");
-            let current_image = CURRENT_IMAGE.load(core::sync::atomic::Ordering::Relaxed);
-            let new_image = DisplayImage::from_u8(current_image).unwrap().next();
-            CURRENT_IMAGE.store(new_image.as_u8(), core::sync::atomic::Ordering::Relaxed);
-            DISPLAY_CHANGED.signal(Screen::Badge);
-            Timer::after(Duration::from_millis(500)).await;
-            continue;
-        }
+    spawner.spawn(handle_presses(user_led)).ok();
 
-        if btn_a.is_high() {
-            println!("{:?}", current_cycle);
-            info!("Button A pressed");
-            user_led.toggle();
-            Timer::after(Duration::from_millis(500)).await;
-            continue;
-        }
+    spawner.spawn(listen_to_button(btn_a, &Button::A)).ok();
+    spawner.spawn(listen_to_button(btn_b, &Button::B)).ok();
+    spawner.spawn(listen_to_button(btn_c, &Button::C)).ok();
+    spawner.spawn(listen_to_button(btn_up, &Button::Up)).ok();
+    spawner
+        .spawn(listen_to_button(btn_down, &Button::Down))
+        .ok();
 
-        if btn_down.is_high() {
-            info!("Button Down pressed");
-
-            DISPLAY_CHANGED.signal(Screen::WifiList);
-
-            Timer::after(Duration::from_millis(500)).await;
-            continue;
-        }
-
-        if btn_up.is_high() {
-            info!("Button Up pressed");
-
-            DISPLAY_CHANGED.signal(Screen::Badge);
-
-            Timer::after(Duration::from_millis(500)).await;
-            continue;
-        }
-
-        if btn_b.is_high() {
-            info!("Button B pressed");
-
-            DISPLAY_CHANGED.signal(Screen::Badge);
-
-            let mut recent_networks = RecentWifiNetworksVec::new();
-            let mut scanner = control.scan(Default::default()).await;
-
-            while let Some(bss) = scanner.next().await {
-                process_bssid(bss.bssid, &mut save.wifi_counted, &mut save.bssid);
-                if recent_networks.len() < 8 {
-                    let possible_ssid = core::str::from_utf8(&bss.ssid);
-                    match possible_ssid {
-                        Ok(ssid) => {
-                            let removed_zeros = ssid.trim_end_matches(char::from(0));
-                            let ssid_string: String<32> =
-                                easy_format::<32>(format_args!("{}", removed_zeros));
-
-                            if recent_networks.contains(&ssid_string) {
-                                continue;
-                            }
-                            if ssid_string != "" {
-                                let _ = recent_networks.push(ssid_string);
-                            }
-                        }
-                        Err(_) => {
-                            continue;
-                        }
-                    }
-                }
-            }
-            RECENT_WIFI_NETWORKS.lock(|recent_networks_vec| {
-                recent_networks_vec.replace(recent_networks);
-            });
-
-            Timer::after(Duration::from_millis(500)).await;
-
-            continue;
-        }
-
-        match rtc_device.get_datetime().await {
-            Ok(now) => {
-                let mut data = RTC_TIME.lock().await;
-                *data = Some(now);
-            }
-            Err(_err) => {
-                error!("Error getting time");
-
-                let mut data = RTC_TIME.lock().await;
-                *data = None;
-            }
-        };
-
-        if time_to_scan {
-            control
-                .set_power_management(PowerManagementMode::None)
-                .await;
-
-            Timer::after(Duration::from_millis(100)).await;
-            info!("Scanning for wifi networks");
-            time_to_scan = false;
-
-            {
-                let mut scanner = control.scan(Default::default()).await;
-                while let Some(bss) = scanner.next().await {
-                    process_bssid(bss.bssid, &mut save.wifi_counted, &mut save.bssid);
-                }
-                WIFI_COUNT.store(save.wifi_counted, core::sync::atomic::Ordering::Relaxed);
-                save_postcard_to_flash(ADDR_OFFSET, &mut flash, SAVE_OFFSET, &save).unwrap();
-                info!("wifi_counted: {}", save.wifi_counted);
-            }
-
-            control
-                .set_power_management(PowerManagementMode::PowerSave)
-                .await;
-        }
-        if current_cycle >= reset_cycle {
-            current_cycle = 0;
-            time_to_scan = true;
-        }
-
-        current_cycle += 1;
-        Timer::after(cycle).await;
-    }
+    spawner.spawn(update_time(rtc_device)).ok();
 }
 
 #[embassy_executor::task]
@@ -400,6 +267,57 @@ async fn cyw43_task(
     runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO0, 0, DMA_CH0>>,
 ) -> ! {
     runner.run().await
+}
+
+#[embassy_executor::task(pool_size = 5)]
+async fn listen_to_button(mut button: Input<'static>, btn_type: &'static Button) -> ! {
+    loop {
+        button.wait_for_high().await;
+        Timer::after_millis(50).await;
+
+        if button.is_high() {
+            BUTTON_PRESSED.signal(btn_type);
+        }
+
+        button.wait_for_low().await;
+    }
+}
+
+#[embassy_executor::task]
+async fn handle_presses(mut user_led: Output<'static>) -> ! {
+    loop {
+        let btn = BUTTON_PRESSED.wait().await;
+
+        match btn {
+            Button::A => {
+                user_led.toggle();
+            }
+            Button::B => {}
+            Button::C => {
+                let current_image = CURRENT_IMAGE.load(core::sync::atomic::Ordering::Relaxed);
+                let new_image = DisplayImage::from_u8(current_image).unwrap().next();
+                CURRENT_IMAGE.store(new_image.as_u8(), core::sync::atomic::Ordering::Relaxed);
+                DISPLAY_CHANGED.signal(Screen::Badge);
+            }
+            Button::Down => {
+                DISPLAY_CHANGED.signal(Screen::WifiList);
+            }
+            Button::Up => {
+                DISPLAY_CHANGED.signal(Screen::Badge);
+            }
+        }
+    }
+}
+
+#[embassy_executor::task]
+async fn update_time(mut rtc_device: PCF85063<SharedI2c>) -> ! {
+    loop {
+        Timer::after_secs(60).await;
+
+        let result = rtc_device.get_datetime().await.ok();
+        let mut data = RTC_TIME.lock().await;
+        *data = result;
+    }
 }
 
 #[derive(Deserialize)]
@@ -432,27 +350,11 @@ impl<'a> From<TimeApiResponse<'a>> for PrimitiveDateTime {
     }
 }
 
-fn process_bssid(bssid: [u8; 6], wifi_counted: &mut u32, bssids: &mut Vec<String<17>, BSSID_LEN>) {
-    let bssid_str = format_bssid(bssid);
-    if !bssids.contains(&bssid_str) {
-        *wifi_counted += 1;
-        WIFI_COUNT.store(*wifi_counted, core::sync::atomic::Ordering::Relaxed);
-        // info!("bssid: {:x}", bssid_str);
-        let result = bssids.push(bssid_str);
-        if result.is_err() {
-            info!("bssid list full");
-            bssids.clear();
-        }
+async fn blink(pin: &mut Output<'_>, n_times: usize) {
+    for _ in 0..n_times {
+        pin.set_high();
+        Timer::after_millis(100).await;
+        pin.set_low();
+        Timer::after_millis(100).await;
     }
-}
-
-fn format_bssid(bssid: [u8; 6]) -> String<17> {
-    let mut s = String::new();
-    for (i, byte) in bssid.iter().enumerate() {
-        if i != 0 {
-            let _ = s.write_char(':');
-        }
-        core::fmt::write(&mut s, format_args!("{:02x}", byte)).unwrap();
-    }
-    s
 }
