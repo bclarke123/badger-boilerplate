@@ -402,13 +402,11 @@ impl<'a> From<TimeApiResponse<'a>> for PrimitiveDateTime {
     }
 }
 
-async fn blink(pin_mut: &Mutex<ThreadModeRawMutex, Output<'_>>, n_times: usize) {
-    let mut pin = pin_mut.lock().await;
-
+async fn blink(pin: &Mutex<ThreadModeRawMutex, Output<'_>>, n_times: usize) {
     for _ in 0..n_times {
-        pin.set_high();
+        pin.lock().await.set_high();
         Timer::after_millis(100).await;
-        pin.set_low();
+        pin.lock().await.set_low();
         Timer::after_millis(100).await;
     }
 }
