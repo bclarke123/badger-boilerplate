@@ -59,6 +59,9 @@ static BUTTON_PRESSED: Signal<ThreadModeRawMutex, &'static Button> = Signal::new
 
 pub static POWER_MUTEX: Mutex<ThreadModeRawMutex, ()> = Mutex::new(());
 
+static RTC_DEVICE: StaticCell<Mutex<ThreadModeRawMutex, PCF85063<SharedI2c>>> = StaticCell::new();
+static USER_LED: StaticCell<Mutex<ThreadModeRawMutex, Output<'static>>> = StaticCell::new();
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
@@ -66,9 +69,10 @@ async fn main(spawner: Spawner) {
     let mut power_latch = Output::new(p.PIN_10, Level::High);
     power_latch.set_high();
 
-    let mut user_led = Output::new(p.PIN_22, Level::High);
+    let user_pin = Output::new(p.PIN_22, Level::High);
+    let user_led = USER_LED.init(Mutex::new(user_pin));
 
-    blink(&mut user_led, 1).await;
+    blink(&user_led, 1).await;
 
     //Wifi driver and cyw43 setup
     let fw = include_bytes!("../cyw43-firmware/43439A0.bin");
@@ -123,7 +127,8 @@ async fn main(spawner: Spawner) {
     let i2c_bus = I2C_BUS.init(i2c_bus);
 
     let i2c_dev = I2cDevice::new(i2c_bus);
-    let mut rtc_device = PCF85063::new(i2c_dev);
+    let rtc = PCF85063::new(i2c_dev);
+    let rtc_device = RTC_DEVICE.init(Mutex::new(rtc));
 
     let spi = Spi::new(
         p.SPI0,
@@ -139,7 +144,7 @@ async fn main(spawner: Spawner) {
     static SPI_BUS: StaticCell<Spi0Bus> = StaticCell::new();
     let spi_bus = SPI_BUS.init(Mutex::new(spi));
 
-    blink(&mut user_led, 2).await;
+    blink(user_led, 2).await;
 
     DISPLAY_CHANGED.signal(Screen::Badge);
     spawner.must_spawn(run_the_display(spi_bus, cs, dc, busy, reset));
@@ -160,19 +165,9 @@ async fn main(spawner: Spawner) {
 
     spawner.must_spawn(net_task(runner));
 
-    {
-        let _guard = POWER_MUTEX.lock().await;
-        connect_to_wifi(&mut control, &stack).await;
-
-        blink(&mut user_led, 3).await;
-
-        Timer::after_millis(100).await;
-    }
-
-    //RTC Web request
-    let mut rx_buffer = [0; 8192];
-    let url = env_value("TIME_API");
-    fetch_time(&stack, url, &mut rx_buffer, &mut rtc_device, &mut user_led).await;
+    spawner
+        .spawn(run_network(control, stack, user_led, rtc_device))
+        .ok();
 
     spawner.spawn(handle_presses(user_led)).ok();
 
@@ -217,13 +212,13 @@ async fn listen_to_button(mut button: Input<'static>, btn_type: &'static Button)
 }
 
 #[embassy_executor::task]
-async fn handle_presses(mut user_led: Output<'static>) -> ! {
+async fn handle_presses(user_led: &'static Mutex<ThreadModeRawMutex, Output<'static>>) -> ! {
     loop {
         let btn = BUTTON_PRESSED.wait().await;
 
         match btn {
             Button::A => {
-                user_led.toggle();
+                user_led.lock().await.toggle();
             }
             Button::B => {}
             Button::C => {
@@ -243,18 +238,48 @@ async fn handle_presses(mut user_led: Output<'static>) -> ! {
 }
 
 #[embassy_executor::task]
-async fn update_time(mut rtc_device: PCF85063<SharedI2c>) -> ! {
+async fn update_time(rtc_device: &'static Mutex<ThreadModeRawMutex, PCF85063<SharedI2c>>) -> ! {
     loop {
         Timer::after_secs(60).await;
 
         let _guard = POWER_MUTEX.lock().await;
         {
-            let result = rtc_device.get_datetime().await.ok();
+            let result = rtc_device.lock().await.get_datetime().await.ok();
             let mut data = RTC_TIME.lock().await;
             *data = result;
 
             Timer::after_millis(50).await;
         }
+    }
+}
+
+#[embassy_executor::task]
+async fn run_network(
+    mut control: Control<'static>,
+    stack: Stack<'static>,
+    user_led: &'static Mutex<ThreadModeRawMutex, Output<'static>>,
+    rtc_device: &'static Mutex<ThreadModeRawMutex, PCF85063<SharedI2c>>,
+) -> ! {
+    {
+        let _guard = POWER_MUTEX.lock().await;
+        connect_to_wifi(&mut control, &stack).await;
+
+        blink(user_led, 3).await;
+
+        Timer::after_millis(100).await;
+    }
+
+    //RTC Web request
+    let mut rx_buffer = [0; 8192];
+    let url = env_value("TIME_API");
+    fetch_time(&stack, url, &mut rx_buffer, rtc_device, user_led).await;
+
+    loop {
+        // TODO download weather here
+
+        control.leave().await;
+
+        Timer::after_secs(3600).await;
     }
 }
 
@@ -285,7 +310,6 @@ async fn connect_to_wifi(control: &mut Control<'_>, stack: &Stack<'_>) {
     }
 
     if connected_to_wifi {
-        //Feed the dog if it makes it this far
         info!("waiting for DHCP...");
         while !stack.is_config_up() {
             Timer::after_millis(100).await;
@@ -308,8 +332,8 @@ async fn fetch_time(
     stack: &Stack<'_>,
     url: &str,
     rx_buffer: &mut [u8],
-    rtc_device: &mut PCF85063<SharedI2c>,
-    user_led: &mut Output<'static>,
+    rtc_device: &Mutex<ThreadModeRawMutex, PCF85063<SharedI2c>>,
+    user_led: &Mutex<ThreadModeRawMutex, Output<'static>>,
 ) {
     let _guard = POWER_MUTEX.lock().await;
 
@@ -320,6 +344,8 @@ async fn fetch_time(
                     let datetime: PrimitiveDateTime = output.into();
 
                     rtc_device
+                        .lock()
+                        .await
                         .set_datetime(&datetime)
                         .await
                         .expect("TODO: panic message");
@@ -376,7 +402,9 @@ impl<'a> From<TimeApiResponse<'a>> for PrimitiveDateTime {
     }
 }
 
-async fn blink(pin: &mut Output<'_>, n_times: usize) {
+async fn blink(pin_mut: &Mutex<ThreadModeRawMutex, Output<'_>>, n_times: usize) {
+    let mut pin = pin_mut.lock().await;
+
     for _ in 0..n_times {
         pin.set_high();
         Timer::after_millis(100).await;
