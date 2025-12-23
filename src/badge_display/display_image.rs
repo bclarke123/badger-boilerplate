@@ -3,9 +3,9 @@ use embedded_graphics::prelude::Point;
 use super::CURRENT_IMAGE;
 
 static NUMBER_OF_IMAGES: u8 = 3;
-static FERRIS_IMG: &[u8; 15722] = include_bytes!("../../images/ferris_w_a_knife.bmp");
-static REPO_IMG: &[u8; 11262] = include_bytes!("../../images/repo.bmp");
-static MTRAS_LOGO: &[u8; 11162] = include_bytes!("../../images/mtras_logo.bmp");
+static FERRIS_IMG: &[u8] = include_bytes!("../../images/julian.bmp");
+static REPO_IMG: &[u8] = include_bytes!("../../images/repo.bmp");
+static MTRAS_LOGO: &[u8] = include_bytes!("../../images/mtras_logo.bmp");
 
 pub enum DisplayImage {
     Ferris = 0,
@@ -60,7 +60,7 @@ impl DisplayImage {
 
     pub fn image_location(&self) -> Point {
         match self {
-            Self::Ferris => Point::new(150, 26),
+            Self::Ferris => Point::new(0, 24),
             Self::Repo => Point::new(190, 26),
             Self::MtrasLogo => Point::new(190, 26),
         }

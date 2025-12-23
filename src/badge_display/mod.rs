@@ -101,28 +101,28 @@ async fn draw_badge<SPI>(
 ) where
     SPI: SpiDevice,
 {
-    let mut name_and_details_buffer = [0; 128];
-    let name_and_details = easy_format_str(
-        format_args!("{}\n{}", env_value("NAME"), env_value("DETAILS")),
-        &mut name_and_details_buffer,
-    );
+    // let mut name_and_details_buffer = [0; 128];
+    // let name_and_details = easy_format_str(
+    //     format_args!("{}\n{}", env_value("NAME"), env_value("DETAILS")),
+    //     &mut name_and_details_buffer,
+    // );
 
     let character_style = MonoTextStyle::new(&FONT_9X18_BOLD, BinaryColor::Off);
-    let textbox_style = TextBoxStyleBuilder::new()
-        .height_mode(HeightMode::FitToText)
-        .alignment(HorizontalAlignment::Left)
-        .paragraph_spacing(6)
-        .build();
+    // let textbox_style = TextBoxStyleBuilder::new()
+    //     .height_mode(HeightMode::FitToText)
+    //     .alignment(HorizontalAlignment::Left)
+    //     .paragraph_spacing(6)
+    //     .build();
 
-    let name_and_detail_bounds = Rectangle::new(Point::new(0, 40), Size::new(WIDTH - 75, 0));
-    let name_and_detail_box = TextBox::with_textbox_style(
-        &name_and_details.unwrap(),
-        name_and_detail_bounds,
-        character_style,
-        textbox_style,
-    );
+    // let name_and_detail_bounds = Rectangle::new(Point::new(0, 40), Size::new(WIDTH - 75, 0));
+    // let name_and_detail_box = TextBox::with_textbox_style(
+    //     &name_and_details.unwrap(),
+    //     name_and_detail_bounds,
+    //     character_style,
+    //     textbox_style,
+    // );
 
-    name_and_detail_box.draw(display).unwrap();
+    // name_and_detail_box.draw(display).unwrap();
 
     let top_bounds = Rectangle::new(Point::new(0, 0), Size::new(WIDTH, 24));
     let time_box_rectangle_location = Point::new((WIDTH - 88) as i32, 0);
