@@ -10,7 +10,7 @@ use defmt::info;
 use defmt::*;
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_executor::Spawner;
-use embassy_net::StackResources;
+use embassy_net::{Stack, StackResources};
 use embassy_rp::clocks::RoscRng;
 use embassy_rp::gpio::Input;
 use embassy_rp::i2c::I2c;
@@ -203,36 +203,7 @@ async fn main(spawner: Spawner) {
         let url = env_value("TIME_API");
         info!("connecting to {}", &url);
 
-        //If the call goes through set the rtc
-        match http_get(&stack, url, &mut rx_buffer).await {
-            Ok(bytes) => {
-                match serde_json_core::de::from_slice::<TimeApiResponse>(bytes) {
-                    Ok((output, _used)) => {
-                        let datetime: PrimitiveDateTime = output.into();
-
-                        rtc_device
-                            .set_datetime(&datetime)
-                            .await
-                            .expect("TODO: panic message");
-
-                        let mut data = RTC_TIME.lock().await;
-                        *data = Some(datetime);
-
-                        blink(&mut user_led, 4).await;
-                    }
-                    Err(_e) => {
-                        error!("Failed to parse response body");
-                        // return; // handle the error
-
-                        blink(&mut user_led, 1).await;
-                    }
-                }
-            }
-            Err(e) => {
-                error!("Failed to make HTTP request: {:?}", e);
-                // return; // handle the error
-            }
-        };
+        fetch_time(&stack, url, &mut rx_buffer, &mut rtc_device, &mut user_led).await;
 
         // control.leave().await;
     }
@@ -318,6 +289,44 @@ async fn update_time(mut rtc_device: PCF85063<SharedI2c>) -> ! {
         let mut data = RTC_TIME.lock().await;
         *data = result;
     }
+}
+
+async fn fetch_time(
+    stack: &Stack<'_>,
+    url: &str,
+    rx_buffer: &mut [u8],
+    rtc_device: &mut PCF85063<SharedI2c>,
+    user_led: &mut Output<'static>,
+) {
+    match http_get(&stack, url, rx_buffer).await {
+        Ok(bytes) => {
+            match serde_json_core::de::from_slice::<TimeApiResponse>(bytes) {
+                Ok((output, _used)) => {
+                    let datetime: PrimitiveDateTime = output.into();
+
+                    rtc_device
+                        .set_datetime(&datetime)
+                        .await
+                        .expect("TODO: panic message");
+
+                    let mut data = RTC_TIME.lock().await;
+                    *data = Some(datetime);
+
+                    blink(user_led, 4).await;
+                }
+                Err(_e) => {
+                    error!("Failed to parse response body");
+                    // return; // handle the error
+
+                    blink(user_led, 1).await;
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to make HTTP request: {:?}", e);
+            // return; // handle the error
+        }
+    };
 }
 
 #[derive(Deserialize)]
