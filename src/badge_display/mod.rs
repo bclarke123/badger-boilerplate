@@ -29,15 +29,14 @@ use tinybmp::Bmp;
 use uc8151::{LUT, WIDTH, asynch::Uc8151};
 
 use crate::{
-    POWER_MUTEX, Spi0Bus,
+    CurrentWeather, POWER_MUTEX, Spi0Bus,
     env::env_value,
     helpers::{easy_format, easy_format_str},
 };
 
 pub static CURRENT_IMAGE: AtomicU8 = AtomicU8::new(0);
 pub static RTC_TIME: Mutex<ThreadModeRawMutex, Option<PrimitiveDateTime>> = Mutex::new(None);
-pub static TEMP: AtomicU8 = AtomicU8::new(0);
-pub static HUMIDITY: AtomicU8 = AtomicU8::new(0);
+pub static WEATHER: Mutex<ThreadModeRawMutex, Option<CurrentWeather>> = Mutex::new(None);
 
 #[derive(Debug, Clone, Copy, PartialEq, defmt::Format)]
 pub enum Screen {
@@ -125,25 +124,32 @@ async fn draw_badge<SPI>(
 
     name_and_detail_box.draw(display).unwrap();
 
-    let temp = TEMP.load(core::sync::atomic::Ordering::Relaxed);
-    let humidity = HUMIDITY.load(core::sync::atomic::Ordering::Relaxed);
-    let top_text: String<64> =
-        easy_format::<64>(format_args!("{}F {}% Wifi found: {}", temp, humidity, 0));
-    let top_bounds = Rectangle::new(Point::new(0, 0), Size::new(WIDTH, 24));
-    top_bounds
-        .into_styled(
-            PrimitiveStyleBuilder::default()
-                .stroke_color(BinaryColor::Off)
-                .fill_color(BinaryColor::On)
-                .stroke_width(1)
-                .build(),
-        )
-        .draw(display)
-        .unwrap();
+    {
+        let data = *WEATHER.lock().await;
+        if data.is_some() {
+            let data = data.unwrap();
+            let top_text: String<64> = easy_format::<64>(format_args!(
+                "{} C | {}",
+                data.temperature,
+                weather_description(data.weathercode)
+            ));
+            let top_bounds = Rectangle::new(Point::new(0, 0), Size::new(WIDTH, 24));
+            top_bounds
+                .into_styled(
+                    PrimitiveStyleBuilder::default()
+                        .stroke_color(BinaryColor::Off)
+                        .fill_color(BinaryColor::On)
+                        .stroke_width(1)
+                        .build(),
+                )
+                .draw(display)
+                .unwrap();
 
-    Text::new(top_text.as_str(), Point::new(8, 16), character_style)
-        .draw(display)
-        .unwrap();
+            Text::new(top_text.as_str(), Point::new(8, 16), character_style)
+                .draw(display)
+                .unwrap();
+        }
+    }
 
     // Draw the text box.
     // let result = display.partial_update(top_bounds.try_into().unwrap()).await;
@@ -323,4 +329,29 @@ fn get_display_time(time: PrimitiveDateTime) -> String<8> {
     ));
 
     formatted_time
+}
+
+fn weather_description(code: u8) -> &'static str {
+    match code {
+        0 => "Clear Sky",
+        1 => "Mainly Clear",
+        2 => "Partly Cloudy",
+        3 => "Overcast",
+        45 | 48 => "Fog",
+        51 | 53 | 55 => "Drizzle",
+        56 | 57 => "Freezing Drizzle",
+        61 => "Slight Rain",
+        63 => "Rain",
+        65 => "Heavy Rain",
+        66 | 67 => "Freezing Rain",
+        71 => "Slight Snow",
+        73 => "Snow",
+        75 => "Heavy Snow",
+        77 => "Snow Grains",
+        80 | 81 | 82 => "Rain Showers",
+        85 | 86 => "Snow Showers",
+        95 => "Thunderstorm",
+        96 | 99 => "Thunderstorm & Hail",
+        _ => "Unknown",
+    }
 }

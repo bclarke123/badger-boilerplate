@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+use crate::badge_display::WEATHER;
 use crate::http::http_get;
 use badge_display::display_image::DisplayImage;
 use badge_display::{CURRENT_IMAGE, DISPLAY_CHANGED, RTC_TIME, Screen, run_the_display};
@@ -201,16 +202,13 @@ async fn main(spawner: Spawner) {
     }
 }
 
-#[embassy_executor::task]
-async fn net_task(mut runner: embassy_net::Runner<'static, cyw43::NetDriver<'static>>) -> ! {
-    runner.run().await
-}
+async fn get_time(rtc_device: &'static Mutex<ThreadModeRawMutex, PCF85063<SharedI2c>>) {
+    let _guard = POWER_MUTEX.lock().await;
+    let result = rtc_device.lock().await.get_datetime().await.ok();
+    let mut data = RTC_TIME.lock().await;
+    *data = result;
 
-#[embassy_executor::task]
-async fn cyw43_task(
-    runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO0, 0, DMA_CH0>>,
-) -> ! {
-    runner.run().await
+    Timer::after_millis(50).await;
 }
 
 #[embassy_executor::task(pool_size = 5)]
@@ -254,6 +252,18 @@ async fn handle_presses(user_led: &'static Mutex<ThreadModeRawMutex, Output<'sta
 }
 
 #[embassy_executor::task]
+async fn net_task(mut runner: embassy_net::Runner<'static, cyw43::NetDriver<'static>>) -> ! {
+    runner.run().await
+}
+
+#[embassy_executor::task]
+async fn cyw43_task(
+    runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO0, 0, DMA_CH0>>,
+) -> ! {
+    runner.run().await
+}
+
+#[embassy_executor::task]
 async fn update_time(rtc_device: &'static Mutex<ThreadModeRawMutex, PCF85063<SharedI2c>>) -> ! {
     loop {
         Timer::after_secs(60).await;
@@ -269,17 +279,18 @@ async fn run_network(
     rtc_device: &'static Mutex<ThreadModeRawMutex, PCF85063<SharedI2c>>,
 ) -> ! {
     let mut rx_buffer = [0; 8192];
-    let url = env_value("TIME_API");
-
-    if let Ok(_) = connect_to_wifi(&mut control, &stack).await {
-        blink(user_led, 3).await;
-        fetch_time(&stack, url, &mut rx_buffer, rtc_device, user_led).await;
-    }
 
     loop {
-        // TODO download weather here
+        if let Ok(_) = connect_to_wifi(&mut control, &stack).await {
+            blink(user_led, 3).await;
 
-        control.leave().await;
+            fetch_time(&stack, &mut rx_buffer, rtc_device, user_led).await;
+            fetch_weather(&stack, &mut rx_buffer, user_led).await;
+
+            control.leave().await;
+
+            DISPLAY_CHANGED.signal(Screen::Badge);
+        }
 
         Timer::after_secs(3600).await;
     }
@@ -321,55 +332,92 @@ async fn connect_to_wifi(control: &mut Control<'_>, stack: &Stack<'_>) -> Result
 
 async fn fetch_time(
     stack: &Stack<'_>,
-    url: &str,
-    rx_buffer: &mut [u8],
+    rx_buf: &mut [u8],
     rtc_device: &Mutex<ThreadModeRawMutex, PCF85063<SharedI2c>>,
     user_led: &Mutex<ThreadModeRawMutex, Output<'static>>,
 ) {
+    let url = env_value("TIME_API");
     let _guard = POWER_MUTEX.lock().await;
 
-    match http_get(&stack, url, rx_buffer).await {
-        Ok(bytes) => {
-            match serde_json_core::de::from_slice::<TimeApiResponse>(bytes) {
-                Ok((output, _used)) => {
-                    let datetime: PrimitiveDateTime = output.into();
+    if let Ok(response) = fetch_api::<TimeApiResponse>(&stack, rx_buf, user_led, url).await {
+        let datetime: PrimitiveDateTime = response.into();
 
-                    rtc_device
-                        .lock()
-                        .await
-                        .set_datetime(&datetime)
-                        .await
-                        .expect("TODO: panic message");
+        rtc_device
+            .lock()
+            .await
+            .set_datetime(&datetime)
+            .await
+            .expect("TODO: panic message");
 
-                    let mut data = RTC_TIME.lock().await;
-                    *data = Some(datetime);
-
-                    blink(user_led, 4).await;
-                }
-                Err(_e) => {
-                    error!("Failed to parse response body");
-                    // return; // handle the error
-
-                    blink(user_led, 1).await;
-                }
-            }
-        }
-        Err(e) => {
-            error!("Failed to make HTTP request: {:?}", e);
-            // return; // handle the error
-        }
-    };
-
-    Timer::after_millis(50).await;
+        let mut data = RTC_TIME.lock().await;
+        *data = Some(datetime);
+    }
 }
 
-async fn get_time(rtc_device: &'static Mutex<ThreadModeRawMutex, PCF85063<SharedI2c>>) {
+async fn fetch_weather(
+    stack: &Stack<'_>,
+    rx_buf: &mut [u8],
+    user_led: &Mutex<ThreadModeRawMutex, Output<'static>>,
+) {
+    let url = env_value("TEMP_API");
     let _guard = POWER_MUTEX.lock().await;
-    let result = rtc_device.lock().await.get_datetime().await.ok();
-    let mut data = RTC_TIME.lock().await;
-    *data = result;
 
-    Timer::after_millis(50).await;
+    if let Ok(response) = fetch_api::<OpenMeteoResponse>(&stack, rx_buf, user_led, url).await {
+        info!(
+            "Temp: {}C, Code: {}",
+            response.current.temperature, response.current.weathercode
+        );
+
+        let weather = CurrentWeather {
+            temperature: response.current.temperature,
+            weathercode: response.current.weathercode,
+            is_day: response.current.is_day,
+        };
+
+        let mut data = WEATHER.lock().await;
+        *data = Some(weather);
+    }
+}
+
+async fn fetch_api<'a, T>(
+    stack: &Stack<'_>,
+    rx_buf: &'a mut [u8],
+    user_led: &Mutex<ThreadModeRawMutex, Output<'static>>,
+    url: &str,
+) -> Result<T, ()>
+where
+    T: Deserialize<'a>,
+{
+    match http_get(&stack, url, rx_buf).await {
+        Ok(bytes) => match serde_json_core::de::from_slice::<T>(bytes) {
+            Ok((response, _)) => {
+                blink(user_led, 4).await;
+
+                return Ok(response);
+            }
+            Err(_e) => {
+                error!("Failed to parse response body");
+                blink(user_led, 1).await;
+
+                return Err(());
+            }
+        },
+        Err(e) => {
+            error!("Failed to make weather API request: {:?}", e);
+            blink(user_led, 1).await;
+
+            return Err(());
+        }
+    }
+}
+
+async fn blink(pin: &Mutex<ThreadModeRawMutex, Output<'_>>, n_times: usize) {
+    for _ in 0..n_times {
+        pin.lock().await.set_high();
+        Timer::after_millis(100).await;
+        pin.lock().await.set_low();
+        Timer::after_millis(100).await;
+    }
 }
 
 #[derive(Deserialize)]
@@ -402,11 +450,14 @@ impl<'a> From<TimeApiResponse<'a>> for PrimitiveDateTime {
     }
 }
 
-async fn blink(pin: &Mutex<ThreadModeRawMutex, Output<'_>>, n_times: usize) {
-    for _ in 0..n_times {
-        pin.lock().await.set_high();
-        Timer::after_millis(100).await;
-        pin.lock().await.set_low();
-        Timer::after_millis(100).await;
-    }
+#[derive(Deserialize)]
+pub struct OpenMeteoResponse {
+    pub current: CurrentWeather,
+}
+
+#[derive(Deserialize, Copy, Clone)]
+pub struct CurrentWeather {
+    pub temperature: f32,
+    pub weathercode: u8,
+    pub is_day: u8,
 }

@@ -63,7 +63,7 @@ fixed-macro = "1.2"
 # for web request example
 reqwless = { version = "0.13.0", features = ["defmt"] }
 serde = { version = "1.0.203", default-features = false, features = ["derive"] }
-serde-json-core = "0.5.1"
+serde-json-core = "0.6"
 
 assign-resources = { git = "https://github.com/adamgreig/assign-resources", rev = "94ad10e2729afdf0fd5a77cd12e68409a982f58a" }
 
