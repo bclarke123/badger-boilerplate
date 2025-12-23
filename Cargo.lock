@@ -1594,13 +1594,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "panic-probe"
-version = "1.0.0"
+name = "panic-reset"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd402d00b0fb94c5aee000029204a46884b1262e0c443f166d86d2c0747e1a1a"
+checksum = "6cf1ff2a5b1a478dd94572aa43476b6630e72071cbd016985003ad3903a3a4f5"
 dependencies = [
  "cortex-m",
- "defmt 1.0.1",
 ]
 
 [[package]]
@@ -2092,7 +2091,7 @@ dependencies = [
  "fixed-macro",
  "heapless 0.8.0",
  "log",
- "panic-probe",
+ "panic-reset",
  "pcf85063a",
  "pio 0.2.1",
  "pio-proc 0.2.2",

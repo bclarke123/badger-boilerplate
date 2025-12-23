@@ -72,7 +72,8 @@ assign-resources = { git = "https://github.com/adamgreig/assign-resources", rev 
 cortex-m = { version = "0.7.6", features = ["inline-asm"] }
 cortex-m-rt = "0.7.5"
 critical-section = "1.1"
-panic-probe = { version = "1.0.0", features = ["print-defmt"] }
+# panic-probe = { version = "1.0.0", features = ["print-defmt"] }
+panic-reset = "0.1.1"
 
 embedded-graphics = "0.8.1"
 byte-slice-cast = { version = "1.2.0", default-features = false }
