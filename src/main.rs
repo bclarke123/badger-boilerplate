@@ -287,14 +287,13 @@ async fn run_network(
 
 async fn connect_to_wifi(control: &mut Control<'_>, stack: &Stack<'_>) -> Result<(), ()> {
     let _guard = POWER_MUTEX.lock().await;
-    //Attempt to connect to wifi to get RTC time loop for 2 minutes
-    let mut wifi_connection_attempts = 0;
+
     let mut connected_to_wifi = false;
 
     let wifi_ssid = env_value("WIFI_SSID");
     let wifi_password = env_value("WIFI_PASSWORD");
 
-    while wifi_connection_attempts < 30 {
+    for _ in 0..30 {
         match control
             .join(wifi_ssid, JoinOptions::new(wifi_password.as_bytes()))
             .await
@@ -309,32 +308,13 @@ async fn connect_to_wifi(control: &mut Control<'_>, stack: &Stack<'_>) -> Result
             }
         }
         Timer::after(Duration::from_secs(1)).await;
-        wifi_connection_attempts += 1;
     }
 
     if !connected_to_wifi {
         return Err(());
     }
 
-    if connected_to_wifi {
-        info!("waiting for DHCP...");
-        while !stack.is_config_up() {
-            Timer::after_millis(100).await;
-        }
-        info!("DHCP is now up!");
-
-        info!("waiting for link up...");
-        while !stack.is_link_up() {
-            Timer::after_millis(100).await;
-        }
-        info!("Link is up!");
-
-        info!("waiting for stack to be up...");
-        stack.wait_config_up().await;
-        info!("Stack is up!");
-    }
-
-    Timer::after_millis(100).await;
+    stack.wait_config_up().await;
 
     Ok(())
 }
