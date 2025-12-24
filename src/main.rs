@@ -66,7 +66,7 @@ static FW: &[u8] = include_bytes!("../cyw43-firmware/43439A0.bin");
 static CLM: &[u8] = include_bytes!("../cyw43-firmware/43439A0_clm.bin");
 
 static WIFI_SSID: &str = env!("WIFI_SSID");
-static WIFI_PASSWORD: &str = env!("WIFI_PASSWORD");
+static WIFI_PASSWORD: &[u8] = include_bytes!("../.wifi");
 
 static TIME_API: &str = env!("TIME_API");
 static TEMP_API: &str = env!("TEMP_API");
@@ -319,7 +319,7 @@ async fn connect_to_wifi(control: &mut Control<'_>, stack: &Stack<'_>) -> Result
 
     for _ in 0..30 {
         match control
-            .join(WIFI_SSID, JoinOptions::new(WIFI_PASSWORD.as_bytes()))
+            .join(WIFI_SSID, JoinOptions::new(WIFI_PASSWORD))
             .await
         {
             Ok(_) => {
