@@ -369,14 +369,8 @@ async fn fetch_weather(stack: &Stack<'_>, rx_buf: &mut [u8]) {
             response.current.temperature, response.current.weathercode
         );
 
-        let weather = CurrentWeather {
-            temperature: response.current.temperature,
-            weathercode: response.current.weathercode,
-            is_day: response.current.is_day,
-        };
-
         let mut data = WEATHER.lock().await;
-        *data = Some(weather);
+        *data = Some(response.current);
     }
 }
 

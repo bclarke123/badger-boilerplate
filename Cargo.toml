@@ -103,6 +103,11 @@ time = { version = "0.3.17", default-features = false }
 pcf85063a = "0.1.1"
 embassy-futures = "0.1.2"
 
+[[bin]]
+name = "rusty_badger"
+test = false
+bench = false
+
 [profile.release]
 lto = true
 opt-level = "z"
