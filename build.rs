@@ -13,7 +13,24 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 
-fn main() {
+fn setup_env() {
+    // This tells Cargo to rerun this script if .env changes
+    println!("cargo:rerun-if-changed=.env");
+
+    // Read the .env file
+    if let Ok(content) = std::fs::read_to_string(".env") {
+        for line in content.lines() {
+            if let Some((key, value)) = line.split_once('=') {
+                let key = key.trim();
+                let value = value.trim().trim_matches('"');
+
+                println!("cargo:rustc-env={}={}", key, value);
+            }
+        }
+    }
+}
+
+fn setup_build() {
     // Put `memory.x` in our output directory and ensure it's
     // on the linker search path.
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
@@ -33,4 +50,9 @@ fn main() {
     println!("cargo:rustc-link-arg-bins=-Tlink.x");
     println!("cargo:rustc-link-arg-bins=-Tlink-rp.x");
     println!("cargo:rustc-link-arg-bins=-Tdefmt.x");
+}
+
+fn main() {
+    setup_env();
+    setup_build();
 }

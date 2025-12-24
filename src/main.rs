@@ -22,7 +22,6 @@ use embassy_sync::blocking_mutex::raw::{NoopRawMutex, ThreadModeRawMutex};
 use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
-use env::env_value;
 use gpio::{Level, Output, Pull};
 use heapless::Vec;
 use http::http_get;
@@ -33,7 +32,6 @@ use time::{Date, Month, PrimitiveDateTime, Time};
 use {defmt_rtt as _, panic_reset as _};
 
 mod badge_display;
-mod env;
 mod helpers;
 mod http;
 
@@ -66,6 +64,12 @@ static USER_LED: StaticCell<Mutex<ThreadModeRawMutex, Output<'static>>> = Static
 
 static FW: &[u8] = include_bytes!("../cyw43-firmware/43439A0.bin");
 static CLM: &[u8] = include_bytes!("../cyw43-firmware/43439A0_clm.bin");
+
+static WIFI_SSID: &str = env!("WIFI_SSID");
+static WIFI_PASSWORD: &str = env!("WIFI_PASSWORD");
+
+static TIME_API: &str = env!("TIME_API");
+static TEMP_API: &str = env!("TEMP_API");
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -273,7 +277,7 @@ async fn update_time(rtc_device: &'static Mutex<ThreadModeRawMutex, PCF85063<Sha
             sec_delay = (60 - time.second().clamp(0, 50)) as u64;
         }
 
-        DISPLAY_CHANGED.signal(Screen::Time);
+        DISPLAY_CHANGED.signal(Screen::TopBar);
     }
 }
 
@@ -314,12 +318,9 @@ async fn connect_to_wifi(control: &mut Control<'_>, stack: &Stack<'_>) -> Result
 
     let mut connected_to_wifi = false;
 
-    let wifi_ssid = env_value("WIFI_SSID");
-    let wifi_password = env_value("WIFI_PASSWORD");
-
     for _ in 0..30 {
         match control
-            .join(wifi_ssid, JoinOptions::new(wifi_password.as_bytes()))
+            .join(WIFI_SSID, JoinOptions::new(WIFI_PASSWORD.as_bytes()))
             .await
         {
             Ok(_) => {
@@ -348,10 +349,9 @@ async fn fetch_time(
     rx_buf: &mut [u8],
     rtc_device: &Mutex<ThreadModeRawMutex, PCF85063<SharedI2c>>,
 ) {
-    let url = env_value("TIME_API");
     let _guard = POWER_MUTEX.lock().await;
 
-    if let Ok(response) = fetch_api::<TimeApiResponse>(stack, rx_buf, url).await {
+    if let Ok(response) = fetch_api::<TimeApiResponse>(stack, rx_buf, TIME_API).await {
         let datetime: PrimitiveDateTime = response.into();
 
         rtc_device
@@ -367,10 +367,9 @@ async fn fetch_time(
 }
 
 async fn fetch_weather(stack: &Stack<'_>, rx_buf: &mut [u8]) {
-    let url = env_value("TEMP_API");
     let _guard = POWER_MUTEX.lock().await;
 
-    if let Ok(response) = fetch_api::<OpenMeteoResponse>(stack, rx_buf, url).await {
+    if let Ok(response) = fetch_api::<OpenMeteoResponse>(stack, rx_buf, TEMP_API).await {
         info!(
             "Temp: {}C, Code: {}",
             response.current.temperature, response.current.weathercode
