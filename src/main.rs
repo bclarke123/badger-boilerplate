@@ -1,10 +1,8 @@
 #![no_std]
 #![no_main]
 
-use crate::badge_display::WEATHER;
-use crate::http::http_get;
 use badge_display::display_image::DisplayImage;
-use badge_display::{CURRENT_IMAGE, DISPLAY_CHANGED, RTC_TIME, Screen, run_the_display};
+use badge_display::{CURRENT_IMAGE, DISPLAY_CHANGED, Screen, run_the_display};
 use cyw43::{Control, JoinOptions};
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use defmt::info;
@@ -27,6 +25,7 @@ use embassy_time::{Duration, Timer};
 use env::env_value;
 use gpio::{Level, Output, Pull};
 use heapless::Vec;
+use http::http_get;
 use pcf85063a::PCF85063;
 use serde::Deserialize;
 use static_cell::StaticCell;
@@ -59,6 +58,8 @@ enum Button {
 static BUTTON_PRESSED: Signal<ThreadModeRawMutex, &'static Button> = Signal::new();
 
 pub static POWER_MUTEX: Mutex<ThreadModeRawMutex, ()> = Mutex::new(());
+pub static RTC_TIME: Mutex<ThreadModeRawMutex, Option<PrimitiveDateTime>> = Mutex::new(None);
+pub static WEATHER: Mutex<ThreadModeRawMutex, Option<CurrentWeather>> = Mutex::new(None);
 
 static RTC_DEVICE: StaticCell<Mutex<ThreadModeRawMutex, PCF85063<SharedI2c>>> = StaticCell::new();
 static USER_LED: StaticCell<Mutex<ThreadModeRawMutex, Output<'static>>> = StaticCell::new();
@@ -126,7 +127,7 @@ async fn main(spawner: Spawner) {
         static SPI_BUS: StaticCell<Spi0Bus> = StaticCell::new();
         let spi_bus = SPI_BUS.init(Mutex::new(spi));
 
-        DISPLAY_CHANGED.signal(Screen::Badge);
+        DISPLAY_CHANGED.signal(Screen::Full);
         spawner.must_spawn(run_the_display(spi_bus, cs, dc, busy, reset));
     }
 
@@ -235,19 +236,15 @@ async fn handle_presses(user_led: &'static Mutex<ThreadModeRawMutex, Output<'sta
             Button::A => {
                 user_led.lock().await.toggle();
             }
-            Button::B => {}
+            Button::B => DISPLAY_CHANGED.signal(Screen::Full),
             Button::C => {
                 let current_image = CURRENT_IMAGE.load(core::sync::atomic::Ordering::Relaxed);
                 let new_image = DisplayImage::from_u8(current_image).unwrap().next();
                 CURRENT_IMAGE.store(new_image.as_u8(), core::sync::atomic::Ordering::Relaxed);
-                DISPLAY_CHANGED.signal(Screen::Badge);
+                DISPLAY_CHANGED.signal(Screen::Image);
             }
-            Button::Down => {
-                DISPLAY_CHANGED.signal(Screen::WifiList);
-            }
-            Button::Up => {
-                DISPLAY_CHANGED.signal(Screen::Badge);
-            }
+            Button::Down => {}
+            Button::Up => {}
         }
     }
 }
@@ -269,6 +266,7 @@ async fn update_time(rtc_device: &'static Mutex<ThreadModeRawMutex, PCF85063<Sha
     loop {
         Timer::after_secs(60).await;
         get_time(&rtc_device).await;
+        DISPLAY_CHANGED.signal(Screen::TopBar);
     }
 }
 
@@ -297,7 +295,7 @@ async fn run_network(
 
             blink(user_led, 4).await;
 
-            DISPLAY_CHANGED.signal(Screen::Badge);
+            DISPLAY_CHANGED.signal(Screen::TopBar);
         }
 
         Timer::after_secs(3600).await;

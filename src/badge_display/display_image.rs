@@ -49,14 +49,14 @@ impl DisplayImage {
         DisplayImage::from_u8(next_image).unwrap()
     }
 
-    pub fn previous(&self) -> Self {
-        let image_count = self.as_u8();
-        if image_count == 0 {
-            return DisplayImage::from_u8(NUMBER_OF_IMAGES - 1).unwrap();
-        }
-        let previous_image = (image_count - 1) % NUMBER_OF_IMAGES;
-        DisplayImage::from_u8(previous_image).unwrap()
-    }
+    // pub fn previous(&self) -> Self {
+    //     let image_count = self.as_u8();
+    //     if image_count == 0 {
+    //         return DisplayImage::from_u8(NUMBER_OF_IMAGES - 1).unwrap();
+    //     }
+    //     let previous_image = (image_count - 1) % NUMBER_OF_IMAGES;
+    //     DisplayImage::from_u8(previous_image).unwrap()
+    // }
 
     pub fn image_location(&self) -> Point {
         match self {
