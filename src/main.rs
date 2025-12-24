@@ -266,7 +266,7 @@ async fn update_time(rtc_device: &'static Mutex<ThreadModeRawMutex, PCF85063<Sha
     loop {
         Timer::after_secs(60).await;
         get_time(&rtc_device).await;
-        DISPLAY_CHANGED.signal(Screen::TopBar);
+        DISPLAY_CHANGED.signal(Screen::Time);
     }
 }
 

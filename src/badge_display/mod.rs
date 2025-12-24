@@ -29,7 +29,7 @@ pub static CURRENT_IMAGE: AtomicU8 = AtomicU8::new(0);
 #[derive(Debug, Clone, Copy, PartialEq, defmt::Format)]
 pub enum Screen {
     // Weather,
-    // Time,
+    Time,
     TopBar,
     Image,
     Full,
@@ -85,9 +85,9 @@ async fn update_screen<SPI>(
         // Screen::Weather => {
         //     draw_weather(display, true).await;
         // }
-        // Screen::Time => {
-        //     draw_time(display, true).await;
-        // }
+        Screen::Time => {
+            draw_time(display, true).await;
+        }
         Screen::Image => {
             draw_current_image(display, true).await;
         }
@@ -148,23 +148,26 @@ async fn draw_time<SPI>(
                     character_style,
                 );
 
-                let rect = Rectangle::new(Point::new(198, 0), Size::new(89, 24));
-
                 if partial {
-                    rect.into_styled(
-                        PrimitiveStyleBuilder::default()
-                            .stroke_color(BinaryColor::On)
-                            .fill_color(BinaryColor::On)
-                            .build(),
-                    )
-                    .draw(display)
-                    .ok();
+                    Rectangle::new(Point::new(192, 1), Size::new(88, 22))
+                        .into_styled(
+                            PrimitiveStyleBuilder::default()
+                                .stroke_color(BinaryColor::On)
+                                .fill_color(BinaryColor::On)
+                                .build(),
+                        )
+                        .draw(display)
+                        .ok();
                 }
 
                 text.draw(display).unwrap();
 
                 if partial {
-                    display.partial_update(rect.try_into().unwrap()).await.ok();
+                    let bounds = Rectangle::new(Point::new(192, 0), Size::new(104, 24));
+                    display
+                        .partial_update(bounds.try_into().unwrap())
+                        .await
+                        .ok();
                 }
             }
             None => {}
