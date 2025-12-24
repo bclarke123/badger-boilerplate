@@ -2,23 +2,23 @@
 #![no_main]
 
 mod badge_display;
+mod buttons;
 mod helpers;
 mod http;
 mod state;
 mod time;
 mod wifi;
 
-use crate::http::{fetch_time, fetch_weather};
-use crate::state::{CURRENT_IMAGE, DISPLAY_CHANGED, POWER_MUTEX, RTC_TIME, Screen};
-use crate::time::get_time;
-use badge_display::display_image::DisplayImage;
+use crate::buttons::{handle_presses, listen_to_button};
+use crate::helpers::blink;
+use crate::state::{Button, DISPLAY_CHANGED, POWER_MUTEX, Screen};
+use crate::time::{get_time, update_time};
+use crate::wifi::run_network;
 use badge_display::run_the_display;
-use cyw43::Control;
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_executor::Spawner;
-use embassy_futures::join::join;
-use embassy_net::{Stack, StackResources};
+use embassy_net::StackResources;
 use embassy_rp::clocks::RoscRng;
 use embassy_rp::gpio::Input;
 use embassy_rp::i2c::I2c;
@@ -28,7 +28,6 @@ use embassy_rp::spi::Spi;
 use embassy_rp::{bind_interrupts, gpio, i2c, pio, spi};
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, ThreadModeRawMutex};
 use embassy_sync::mutex::Mutex;
-use embassy_sync::signal::Signal;
 use embassy_time::Timer;
 use gpio::{Level, Output, Pull};
 use pcf85063a::PCF85063;
@@ -42,23 +41,15 @@ type AsyncI2c0 = I2c<'static, I2C0, i2c::Async>;
 type I2c0Bus = Mutex<ThreadModeRawMutex, AsyncI2c0>;
 type SharedI2c = I2cDevice<'static, ThreadModeRawMutex, AsyncI2c0>;
 pub type RtcDevice = PCF85063<SharedI2c>;
+pub type UserLed = Mutex<ThreadModeRawMutex, Output<'static>>;
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => pio::InterruptHandler<peripherals::PIO0>;
     I2C0_IRQ => i2c::InterruptHandler<peripherals::I2C0>;
 });
 
-enum Button {
-    A,
-    B,
-    C,
-    Up,
-    Down,
-}
-static BUTTON_PRESSED: Signal<ThreadModeRawMutex, &'static Button> = Signal::new();
-
 static RTC_DEVICE: StaticCell<Mutex<ThreadModeRawMutex, RtcDevice>> = StaticCell::new();
-static USER_LED: StaticCell<Mutex<ThreadModeRawMutex, Output<'static>>> = StaticCell::new();
+static USER_LED: StaticCell<UserLed> = StaticCell::new();
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -193,42 +184,6 @@ async fn main(spawner: Spawner) {
     }
 }
 
-#[embassy_executor::task(pool_size = 5)]
-async fn listen_to_button(mut button: Input<'static>, btn_type: &'static Button) -> ! {
-    loop {
-        button.wait_for_high().await;
-        Timer::after_millis(50).await;
-
-        if button.is_high() {
-            BUTTON_PRESSED.signal(btn_type);
-        }
-
-        button.wait_for_low().await;
-    }
-}
-
-#[embassy_executor::task]
-async fn handle_presses(user_led: &'static Mutex<ThreadModeRawMutex, Output<'static>>) -> ! {
-    loop {
-        let btn = BUTTON_PRESSED.wait().await;
-
-        match btn {
-            Button::A => {
-                user_led.lock().await.toggle();
-            }
-            Button::B => DISPLAY_CHANGED.signal(Screen::Full),
-            Button::C => {
-                let current_image = CURRENT_IMAGE.load(core::sync::atomic::Ordering::Relaxed);
-                let new_image = DisplayImage::from_u8(current_image).unwrap().next();
-                CURRENT_IMAGE.store(new_image.as_u8(), core::sync::atomic::Ordering::Relaxed);
-                DISPLAY_CHANGED.signal(Screen::Image);
-            }
-            Button::Down => {}
-            Button::Up => {}
-        }
-    }
-}
-
 #[embassy_executor::task]
 async fn net_task(mut runner: embassy_net::Runner<'static, cyw43::NetDriver<'static>>) -> ! {
     runner.run().await
@@ -239,63 +194,4 @@ async fn cyw43_task(
     runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO0, 0, DMA_CH0>>,
 ) -> ! {
     runner.run().await
-}
-
-#[embassy_executor::task]
-async fn update_time(rtc_device: &'static Mutex<ThreadModeRawMutex, PCF85063<SharedI2c>>) -> ! {
-    loop {
-        let delay = match *RTC_TIME.lock().await {
-            Some(time) => 60 - time.second().clamp(0, 50),
-            None => 60,
-        } as u64;
-
-        Timer::after_secs(delay).await;
-        get_time(rtc_device).await;
-
-        DISPLAY_CHANGED.signal(Screen::TopBar);
-    }
-}
-
-#[embassy_executor::task]
-async fn run_network(
-    mut control: Control<'static>,
-    stack: Stack<'static>,
-    user_led: &'static Mutex<ThreadModeRawMutex, Output<'static>>,
-    rtc_device: &'static Mutex<ThreadModeRawMutex, PCF85063<SharedI2c>>,
-) -> ! {
-    let mut rx_buffer = [0; 8192];
-
-    loop {
-        if wifi::connect(&mut control, &stack).await.is_ok() {
-            blink(user_led, 3).await;
-
-            let (time_buf, weather_buf) = rx_buffer.split_at_mut(4096);
-
-            join(
-                fetch_time(&stack, time_buf, rtc_device),
-                fetch_weather(&stack, weather_buf),
-            )
-            .await;
-
-            control.leave().await;
-
-            blink(user_led, 4).await;
-
-            DISPLAY_CHANGED.signal(Screen::TopBar);
-        }
-
-        Timer::after_secs(3600).await;
-    }
-}
-
-async fn blink(pin: &Mutex<ThreadModeRawMutex, Output<'_>>, n_times: usize) {
-    for i in 0..n_times {
-        pin.lock().await.set_high();
-        Timer::after_millis(100).await;
-        pin.lock().await.set_low();
-
-        if i < n_times - 1 {
-            Timer::after_millis(100).await;
-        }
-    }
 }

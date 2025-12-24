@@ -1,9 +1,17 @@
 use cyw43::{Control, JoinOptions};
+use embassy_futures::join::join;
 use embassy_net::Stack;
+use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
 use log::info;
 
-use crate::state::POWER_MUTEX;
+use crate::{
+    RtcDevice, UserLed,
+    helpers::blink,
+    http::{fetch_time, fetch_weather},
+    state::{DISPLAY_CHANGED, POWER_MUTEX, Screen},
+};
 
 pub static FW: &[u8] = include_bytes!("../cyw43-firmware/43439A0.bin");
 pub static CLM: &[u8] = include_bytes!("../cyw43-firmware/43439A0_clm.bin");
@@ -11,7 +19,7 @@ pub static CLM: &[u8] = include_bytes!("../cyw43-firmware/43439A0_clm.bin");
 static WIFI_SSID: &str = env!("WIFI_SSID");
 static WIFI_PASSWORD: &[u8] = include_bytes!("../.wifi");
 
-pub async fn connect(control: &mut Control<'_>, stack: &Stack<'_>) -> Result<(), ()> {
+async fn connect(control: &mut Control<'_>, stack: &Stack<'_>) -> Result<(), ()> {
     let _guard = POWER_MUTEX.lock().await;
 
     let mut connected_to_wifi = false;
@@ -40,4 +48,36 @@ pub async fn connect(control: &mut Control<'_>, stack: &Stack<'_>) -> Result<(),
     stack.wait_config_up().await;
 
     Ok(())
+}
+
+#[embassy_executor::task]
+pub async fn run_network(
+    mut control: Control<'static>,
+    stack: Stack<'static>,
+    user_led: &'static UserLed,
+    rtc_device: &'static Mutex<ThreadModeRawMutex, RtcDevice>,
+) -> ! {
+    let mut rx_buffer = [0; 8192];
+
+    loop {
+        if connect(&mut control, &stack).await.is_ok() {
+            blink(user_led, 3).await;
+
+            let (time_buf, weather_buf) = rx_buffer.split_at_mut(4096);
+
+            join(
+                fetch_time(&stack, time_buf, rtc_device),
+                fetch_weather(&stack, weather_buf),
+            )
+            .await;
+
+            control.leave().await;
+
+            blink(user_led, 4).await;
+
+            DISPLAY_CHANGED.signal(Screen::TopBar);
+        }
+
+        Timer::after_secs(3600).await;
+    }
 }

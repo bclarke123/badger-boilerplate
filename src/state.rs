@@ -20,6 +20,15 @@ pub enum Screen {
 pub static DISPLAY_CHANGED: Signal<ThreadModeRawMutex, Screen> = Signal::new();
 pub static CURRENT_IMAGE: AtomicU8 = AtomicU8::new(0);
 
+pub enum Button {
+    A,
+    B,
+    C,
+    Up,
+    Down,
+}
+pub static BUTTON_PRESSED: Signal<ThreadModeRawMutex, &'static Button> = Signal::new();
+
 #[derive(Deserialize, Copy, Clone)]
 pub struct CurrentWeather {
     pub temperature: f32,
