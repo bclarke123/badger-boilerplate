@@ -1,6 +1,10 @@
 #![no_std]
 #![no_main]
 
+mod badge_display;
+mod helpers;
+mod http;
+
 use badge_display::display_image::DisplayImage;
 use badge_display::{CURRENT_IMAGE, DISPLAY_CHANGED, Screen, run_the_display};
 use cyw43::{Control, JoinOptions};
@@ -30,10 +34,6 @@ use serde::Deserialize;
 use static_cell::StaticCell;
 use time::{Date, Month, PrimitiveDateTime, Time};
 use {defmt_rtt as _, panic_reset as _};
-
-mod badge_display;
-mod helpers;
-mod http;
 
 type Spi0Bus = Mutex<NoopRawMutex, Spi<'static, SPI0, spi::Async>>;
 
