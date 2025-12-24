@@ -79,7 +79,7 @@ async fn main(spawner: Spawner) {
     let user_led = USER_LED.init(Mutex::new(user_pin));
     let rtc_device;
 
-    blink(&user_led, 1).await;
+    blink(user_led, 1).await;
 
     // I2C RTC
     {
@@ -265,7 +265,7 @@ async fn cyw43_task(
 async fn update_time(rtc_device: &'static Mutex<ThreadModeRawMutex, PCF85063<SharedI2c>>) -> ! {
     loop {
         Timer::after_secs(60).await;
-        get_time(&rtc_device).await;
+        get_time(rtc_device).await;
         DISPLAY_CHANGED.signal(Screen::Time);
     }
 }
@@ -280,7 +280,7 @@ async fn run_network(
     let mut rx_buffer = [0; 8192];
 
     loop {
-        if let Ok(_) = connect_to_wifi(&mut control, &stack).await {
+        if connect_to_wifi(&mut control, &stack).await.is_ok() {
             blink(user_led, 3).await;
 
             let (time_buf, weather_buf) = rx_buffer.split_at_mut(4096);
@@ -344,7 +344,7 @@ async fn fetch_time(
     let url = env_value("TIME_API");
     let _guard = POWER_MUTEX.lock().await;
 
-    if let Ok(response) = fetch_api::<TimeApiResponse>(&stack, rx_buf, url).await {
+    if let Ok(response) = fetch_api::<TimeApiResponse>(stack, rx_buf, url).await {
         let datetime: PrimitiveDateTime = response.into();
 
         rtc_device
@@ -363,7 +363,7 @@ async fn fetch_weather(stack: &Stack<'_>, rx_buf: &mut [u8]) {
     let url = env_value("TEMP_API");
     let _guard = POWER_MUTEX.lock().await;
 
-    if let Ok(response) = fetch_api::<OpenMeteoResponse>(&stack, rx_buf, url).await {
+    if let Ok(response) = fetch_api::<OpenMeteoResponse>(stack, rx_buf, url).await {
         info!(
             "Temp: {}C, Code: {}",
             response.current.temperature, response.current.weathercode
@@ -378,19 +378,17 @@ async fn fetch_api<'a, T>(stack: &Stack<'_>, rx_buf: &'a mut [u8], url: &str) ->
 where
     T: Deserialize<'a>,
 {
-    match http_get(&stack, url, rx_buf).await {
+    match http_get(stack, url, rx_buf).await {
         Ok(bytes) => match serde_json_core::de::from_slice::<T>(bytes) {
-            Ok((response, _)) => {
-                return Ok(response);
-            }
+            Ok((response, _)) => Ok(response),
             Err(_e) => {
                 error!("Failed to parse response body");
-                return Err(());
+                Err(())
             }
         },
         Err(e) => {
             error!("Failed to make weather API request: {:?}", e);
-            return Err(());
+            Err(())
         }
     }
 }

@@ -45,7 +45,7 @@ pub async fn run_the_display(
     busy: Input<'static>,
     reset: Output<'static>,
 ) {
-    let spi_dev = AsyncSpiDevice::new(&spi_bus, cs);
+    let spi_dev = AsyncSpiDevice::new(spi_bus, cs);
     let mut display = Uc8151::new(spi_dev, dc, busy, reset, Delay);
 
     loop {
@@ -108,8 +108,7 @@ async fn draw_weather<SPI>(
 
     {
         let data = *WEATHER.lock().await;
-        if data.is_some() {
-            let data = data.unwrap();
+        if let Some(data) = data {
             let top_text: String<64> = easy_format::<64>(format_args!(
                 "{}C | {}",
                 data.temperature,
@@ -138,39 +137,36 @@ async fn draw_time<SPI>(
 
     {
         let date = RTC_TIME.lock().await;
-        match *date {
-            Some(when) => {
-                let str = get_display_time(when);
+        if let Some(when) = *date {
+            let str = get_display_time(when);
 
-                let text = Text::new(
-                    str.as_str(),
-                    Point::new((WIDTH - 98) as i32, 16),
-                    character_style,
-                );
+            let text = Text::new(
+                str.as_str(),
+                Point::new((WIDTH - 98) as i32, 16),
+                character_style,
+            );
 
-                if partial {
-                    Rectangle::new(Point::new(192, 1), Size::new(88, 22))
-                        .into_styled(
-                            PrimitiveStyleBuilder::default()
-                                .stroke_color(BinaryColor::On)
-                                .fill_color(BinaryColor::On)
-                                .build(),
-                        )
-                        .draw(display)
-                        .ok();
-                }
-
-                text.draw(display).unwrap();
-
-                if partial {
-                    let bounds = Rectangle::new(Point::new(192, 0), Size::new(104, 24));
-                    display
-                        .partial_update(bounds.try_into().unwrap())
-                        .await
-                        .ok();
-                }
+            if partial {
+                Rectangle::new(Point::new(192, 1), Size::new(88, 22))
+                    .into_styled(
+                        PrimitiveStyleBuilder::default()
+                            .stroke_color(BinaryColor::On)
+                            .fill_color(BinaryColor::On)
+                            .build(),
+                    )
+                    .draw(display)
+                    .ok();
             }
-            None => {}
+
+            text.draw(display).unwrap();
+
+            if partial {
+                let bounds = Rectangle::new(Point::new(192, 0), Size::new(104, 24));
+                display
+                    .partial_update(bounds.try_into().unwrap())
+                    .await
+                    .ok();
+            }
         };
     }
 }
@@ -212,7 +208,7 @@ async fn draw_current_image<SPI>(
     SPI: SpiDevice,
 {
     let current_image = get_current_image();
-    let tga: Bmp<BinaryColor> = Bmp::from_slice(&current_image.image()).unwrap();
+    let tga: Bmp<BinaryColor> = Bmp::from_slice(current_image.image()).unwrap();
     let image = Image::new(&tga, current_image.image_location());
 
     // clear image location by writing a white rectangle over previous image location
@@ -259,14 +255,12 @@ fn get_display_time(time: PrimitiveDateTime) -> String<10> {
 
     let am_pm = if am { "AM" } else { "PM" };
 
-    let formatted_time = easy_format::<10>(format_args!(
+    easy_format::<10>(format_args!(
         "| {:02}:{:02} {}",
         twelve_hour,
         time.minute(),
         am_pm
-    ));
-
-    formatted_time
+    ))
 }
 
 fn weather_description(code: u8) -> &'static str {
@@ -275,8 +269,8 @@ fn weather_description(code: u8) -> &'static str {
         1 => "Mainly Clear",
         2 => "Part Cloudy",
         3 => "Cloudy",
-        45 | 48 => "Fog",
-        51 | 53 | 55 => "Drizzle",
+        45..=48 => "Fog",
+        51..=55 => "Drizzle",
         56 | 57 => "Frizzle",
         61 => "Light Rain",
         63 => "Rain",
@@ -286,7 +280,7 @@ fn weather_description(code: u8) -> &'static str {
         73 => "Snow",
         75 => "Heavy Snow",
         77 => "Snow Grains",
-        80 | 81 | 82 => "Rain Showers",
+        80..=82 => "Rain Showers",
         85 | 86 => "Snow Showers",
         95 => "Thunderstorm",
         96 | 99 => "Hailstorm",

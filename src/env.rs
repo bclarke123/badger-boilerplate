@@ -3,10 +3,10 @@ const ENV_DATA: &str = include_str!("../.env");
 pub fn env_value(key: &str) -> &'static str {
     for line in ENV_DATA.lines() {
         // let parts: Vec<&str, 2> = line.split('=').collect();
-        if let Some((key_cur, value)) = line.split_once('=') {
-            if key == key_cur {
-                return value;
-            }
+        if let Some((key_cur, value)) = line.split_once('=')
+            && key == key_cur
+        {
+            return value;
         }
     }
     panic!(
