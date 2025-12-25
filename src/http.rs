@@ -1,3 +1,4 @@
+use core::sync::atomic::Ordering;
 use defmt::{Format, error};
 use embassy_net::Stack;
 use embassy_net::dns::DnsSocket;
@@ -11,6 +12,7 @@ use time::{Date, Month, PrimitiveDateTime, Time};
 
 use crate::RtcDevice;
 use crate::state::{CurrentWeather, POWER_MUTEX, RTC_TIME, WEATHER};
+use crate::time::TRUST_TIME;
 
 static TIME_API: &str = env!("TIME_API");
 static TEMP_API: &str = env!("TEMP_API");
@@ -94,6 +96,8 @@ pub async fn fetch_time(stack: &Stack<'_>, rx_buf: &mut [u8], rtc_device: &RtcDe
             .set_datetime(&datetime)
             .await
             .expect("Failed to update RTC time");
+
+        TRUST_TIME.store(true, Ordering::Relaxed);
 
         let mut data = RTC_TIME.lock().await;
         *data = Some(datetime);

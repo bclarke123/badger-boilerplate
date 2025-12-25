@@ -13,7 +13,7 @@ mod wifi;
 use crate::buttons::{handle_presses, listen_to_button};
 use crate::helpers::blink;
 use crate::state::{Button, DISPLAY_CHANGED, POWER_MUTEX, Screen};
-use crate::time::{get_time, update_time};
+use crate::time::{check_trust_time, get_time, update_time};
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_executor::Spawner;
@@ -80,7 +80,9 @@ async fn main(spawner: Spawner) {
         let rtc = RtcDriver::new(i2c_dev);
         rtc_device = RTC_DEVICE.init(Mutex::new(rtc));
 
+        check_trust_time(rtc_device).await;
         get_time(rtc_device).await;
+
         spawner.spawn(update_time(rtc_device)).ok();
     }
 
