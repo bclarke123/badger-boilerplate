@@ -144,7 +144,7 @@ async fn main(spawner: Spawner) {
     {
         Timer::after_millis(100).await;
         let _guard = POWER_MUTEX.lock().await;
-        blink(user_led, 2).await;
+        blink(user_led, 1).await;
     }
 
     // Wifi driver and cyw43 setup

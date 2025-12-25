@@ -4,32 +4,15 @@ use embassy_time::{Duration, Timer};
 use crate::UserLed;
 
 pub async fn blink(led: &UserLed, n_times: usize) {
-    let mut config = Config::default();
-    config.compare_a = 0;
-    config.compare_b = 0;
-    config.top = 25_000;
-
-    let mut locked = led.lock().await;
-
-    for i in 0..n_times {
-        config.compare_a = config.top;
-        locked.set_config(&config);
-
-        Timer::after_millis(100).await;
-
-        config.compare_a = 0;
-        locked.set_config(&config);
-
-        if i < n_times - 1 {
-            Timer::after_millis(100).await;
-        }
+    for _ in 0..n_times {
+        breathe(led, Duration::from_millis(200)).await;
     }
 }
 
-pub async fn breathe(led: &UserLed) {
+pub async fn breathe(led: &UserLed, duration: Duration) {
     let top = 25_000;
-    let steps = 100;
     let delay = Duration::from_millis(10);
+    let steps = (duration.as_millis() / delay.as_millis()) as u16;
 
     let mut config = Config::default();
     config.top = top;
@@ -60,6 +43,6 @@ pub async fn breathe(led: &UserLed) {
 
 pub async fn loop_breathe(led: &UserLed) {
     loop {
-        breathe(led).await;
+        breathe(led, Duration::from_secs(1)).await;
     }
 }
