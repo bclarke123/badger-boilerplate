@@ -1,6 +1,5 @@
-use core::sync::atomic::AtomicU8;
-
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, mutex::Mutex, signal::Signal};
+use portable_atomic::AtomicUsize;
 use serde::Deserialize;
 use time::PrimitiveDateTime;
 
@@ -20,7 +19,7 @@ pub enum Screen {
     Full,
 }
 pub static DISPLAY_CHANGED: Signal<ThreadModeRawMutex, Screen> = Signal::new();
-pub static CURRENT_IMAGE: AtomicU8 = AtomicU8::new(0);
+pub static CURRENT_IMAGE: AtomicUsize = AtomicUsize::new(0);
 
 pub enum Button {
     A,

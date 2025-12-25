@@ -1,4 +1,4 @@
-use crate::image::get_current_image;
+use crate::image;
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice as AsyncSpiDevice;
 use embassy_rp::gpio;
 use embassy_rp::gpio::Input;
@@ -171,9 +171,11 @@ async fn draw_top_bar<SPI: SpiDevice>(display: &mut Display<SPI>, partial: bool)
 }
 
 async fn draw_current_image<SPI: SpiDevice>(display: &mut Display<SPI>, partial: bool) {
-    let current_image = get_current_image();
-    let tga: Bmp<BinaryColor> = Bmp::from_slice(current_image.image()).unwrap();
-    let image = Image::new(&tga, current_image.image_location());
+    let current_image = image::get_image();
+    let position = image::get_position();
+
+    let tga: Bmp<BinaryColor> = Bmp::from_slice(current_image).unwrap();
+    let image = Image::new(&tga, position.into());
 
     // clear image location by writing a white rectangle over previous image location
     let clear_rectangle = Rectangle::new(Point::new(0, 24), Size::new(WIDTH, HEIGHT - 24));
