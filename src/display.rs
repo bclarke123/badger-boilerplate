@@ -1,6 +1,4 @@
-pub mod display_image;
-
-use display_image::get_current_image;
+use crate::image::get_current_image;
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice as AsyncSpiDevice;
 use embassy_rp::gpio;
 use embassy_rp::gpio::Input;
@@ -26,8 +24,10 @@ use crate::{
     state::{DISPLAY_CHANGED, POWER_MUTEX, RTC_TIME, Screen, WEATHER},
 };
 
+type Display<SPI> = Uc8151<SPI, Output<'static>, Input<'static>, Output<'static>, Delay>;
+
 #[embassy_executor::task]
-pub async fn run_the_display(
+pub async fn run(
     spi_bus: &'static Spi0Bus,
     cs: Output<'static>,
     dc: Output<'static>,
@@ -35,7 +35,7 @@ pub async fn run_the_display(
     reset: Output<'static>,
 ) {
     let spi_dev = AsyncSpiDevice::new(spi_bus, cs);
-    let mut display = Uc8151::new(spi_dev, dc, busy, reset, Delay);
+    let mut display = Display::new(spi_dev, dc, busy, reset, Delay);
 
     loop {
         let to_update = DISPLAY_CHANGED.wait().await;
@@ -43,12 +43,7 @@ pub async fn run_the_display(
     }
 }
 
-async fn update_screen<SPI>(
-    display: &mut Uc8151<SPI, Output<'static>, Input<'static>, Output<'static>, Delay>,
-    to_update: &Screen,
-) where
-    SPI: SpiDevice,
-{
+async fn update_screen<SPI: SpiDevice>(display: &mut Display<SPI>, to_update: &Screen) {
     let _guard = POWER_MUTEX.lock().await;
     display.enable();
     display.reset().await;
@@ -87,12 +82,7 @@ async fn update_screen<SPI>(
     Timer::after_millis(50).await;
 }
 
-async fn draw_weather<SPI>(
-    display: &mut Uc8151<SPI, Output<'static>, Input<'static>, Output<'static>, Delay>,
-    partial: bool,
-) where
-    SPI: SpiDevice,
-{
+async fn draw_weather<SPI: SpiDevice>(display: &mut Display<SPI>, partial: bool) {
     let character_style = MonoTextStyle::new(&FONT_9X18_BOLD, BinaryColor::Off);
 
     {
@@ -116,12 +106,7 @@ async fn draw_weather<SPI>(
     }
 }
 
-async fn draw_time<SPI>(
-    display: &mut Uc8151<SPI, Output<'static>, Input<'static>, Output<'static>, Delay>,
-    partial: bool,
-) where
-    SPI: SpiDevice,
-{
+async fn draw_time<SPI: SpiDevice>(display: &mut Display<SPI>, partial: bool) {
     let character_style = MonoTextStyle::new(&FONT_9X18_BOLD, BinaryColor::Off);
 
     {
@@ -160,12 +145,7 @@ async fn draw_time<SPI>(
     }
 }
 
-async fn draw_top_bar<SPI>(
-    display: &mut Uc8151<SPI, Output<'static>, Input<'static>, Output<'static>, Delay>,
-    partial: bool,
-) where
-    SPI: SpiDevice,
-{
+async fn draw_top_bar<SPI: SpiDevice>(display: &mut Display<SPI>, partial: bool) {
     let top_bounds = Rectangle::new(Point::new(0, 0), Size::new(WIDTH, 24));
 
     top_bounds
@@ -190,12 +170,7 @@ async fn draw_top_bar<SPI>(
     }
 }
 
-async fn draw_current_image<SPI>(
-    display: &mut Uc8151<SPI, Output<'static>, Input<'static>, Output<'static>, Delay>,
-    partial: bool,
-) where
-    SPI: SpiDevice,
-{
+async fn draw_current_image<SPI: SpiDevice>(display: &mut Display<SPI>, partial: bool) {
     let current_image = get_current_image();
     let tga: Bmp<BinaryColor> = Bmp::from_slice(current_image.image()).unwrap();
     let image = Image::new(&tga, current_image.image_location());
@@ -217,11 +192,7 @@ async fn draw_current_image<SPI>(
     }
 }
 
-async fn draw_badge<SPI>(
-    display: &mut Uc8151<SPI, Output<'static>, Input<'static>, Output<'static>, Delay>,
-) where
-    SPI: SpiDevice,
-{
+async fn draw_badge<SPI: SpiDevice>(display: &mut Display<SPI>) {
     draw_top_bar(display, false).await;
     draw_current_image(display, false).await;
 

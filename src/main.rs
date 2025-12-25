@@ -1,10 +1,11 @@
 #![no_std]
 #![no_main]
 
-mod badge_display;
 mod buttons;
+mod display;
 mod helpers;
 mod http;
+mod image;
 mod state;
 mod time;
 mod wifi;
@@ -13,8 +14,6 @@ use crate::buttons::{handle_presses, listen_to_button};
 use crate::helpers::blink;
 use crate::state::{Button, DISPLAY_CHANGED, POWER_MUTEX, Screen};
 use crate::time::{get_time, update_time};
-use crate::wifi::run_network;
-use badge_display::run_the_display;
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_executor::Spawner;
@@ -35,14 +34,15 @@ use static_cell::StaticCell;
 
 use {defmt_rtt as _, panic_reset as _};
 
+type MutexObj<T> = Mutex<ThreadModeRawMutex, T>;
+
 type Spi0Bus = Mutex<NoopRawMutex, Spi<'static, SPI0, spi::Async>>;
 
 type AsyncI2c0 = I2c<'static, I2C0, i2c::Async>;
-type I2c0Bus = Mutex<ThreadModeRawMutex, AsyncI2c0>;
+type I2c0Bus = MutexObj<AsyncI2c0>;
 type SharedI2c = I2cDevice<'static, ThreadModeRawMutex, AsyncI2c0>;
 type RtcDriver = PCF85063<SharedI2c>;
 
-type MutexObj<T> = Mutex<ThreadModeRawMutex, T>;
 pub type RtcDevice = MutexObj<RtcDriver>;
 pub type UserLed = MutexObj<Output<'static>>;
 
@@ -112,7 +112,7 @@ async fn main(spawner: Spawner) {
         let spi_bus = SPI_BUS.init(Mutex::new(spi));
 
         DISPLAY_CHANGED.signal(Screen::Full);
-        spawner.must_spawn(run_the_display(spi_bus, cs, dc, busy, reset));
+        spawner.must_spawn(display::run(spi_bus, cs, dc, busy, reset));
     }
 
     // Button handlers
@@ -179,7 +179,7 @@ async fn main(spawner: Spawner) {
         spawner.must_spawn(net_task(netrunner));
 
         spawner
-            .spawn(run_network(control, stack, user_led, rtc_device))
+            .spawn(wifi::run(control, stack, user_led, rtc_device))
             .ok();
     }
 }

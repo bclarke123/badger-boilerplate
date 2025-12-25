@@ -3,9 +3,9 @@ use embassy_time::Timer;
 
 use crate::{
     UserLed,
-    badge_display::display_image::DisplayImage,
     helpers::blink,
-    state::{BUTTON_PRESSED, Button, CURRENT_IMAGE, DISPLAY_CHANGED, Screen},
+    image,
+    state::{BUTTON_PRESSED, Button, DISPLAY_CHANGED, Screen, UPDATE_WEATHER},
 };
 
 #[embassy_executor::task(pool_size = 5)]
@@ -30,12 +30,10 @@ pub async fn handle_presses(user_led: &'static UserLed) -> ! {
         blink(user_led, 1).await;
 
         match btn {
-            Button::A => {}
+            Button::A => UPDATE_WEATHER.signal(()),
             Button::B => DISPLAY_CHANGED.signal(Screen::Full),
             Button::C => {
-                let current_image = CURRENT_IMAGE.load(core::sync::atomic::Ordering::Relaxed);
-                let new_image = DisplayImage::from_u8(current_image).unwrap().next();
-                CURRENT_IMAGE.store(new_image.as_u8(), core::sync::atomic::Ordering::Relaxed);
+                image::next();
                 DISPLAY_CHANGED.signal(Screen::Image);
             }
             Button::Down => {}

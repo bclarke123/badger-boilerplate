@@ -1,5 +1,5 @@
 use cyw43::{Control, JoinOptions};
-use embassy_futures::join::join;
+use embassy_futures::{join::join, select::select};
 use embassy_net::Stack;
 use embassy_time::{Duration, Timer};
 use log::info;
@@ -8,7 +8,7 @@ use crate::{
     RtcDevice, UserLed,
     helpers::blink,
     http::{fetch_time, fetch_weather},
-    state::{DISPLAY_CHANGED, POWER_MUTEX, Screen},
+    state::{DISPLAY_CHANGED, POWER_MUTEX, Screen, UPDATE_WEATHER},
 };
 
 pub static FW: &[u8] = include_bytes!("../cyw43-firmware/43439A0.bin");
@@ -49,7 +49,7 @@ async fn connect(control: &mut Control<'_>, stack: &Stack<'_>) -> Result<(), ()>
 }
 
 #[embassy_executor::task]
-pub async fn run_network(
+pub async fn run(
     mut control: Control<'static>,
     stack: Stack<'static>,
     user_led: &'static UserLed,
@@ -76,6 +76,6 @@ pub async fn run_network(
             DISPLAY_CHANGED.signal(Screen::TopBar);
         }
 
-        Timer::after_secs(3600).await;
+        select(Timer::after_secs(3600), UPDATE_WEATHER.wait()).await;
     }
 }

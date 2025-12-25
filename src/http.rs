@@ -76,7 +76,7 @@ where
             }
         },
         Err(e) => {
-            error!("Failed to make weather API request: {:?}", e);
+            error!("Failed to make API request: {:?}", e);
             Err(())
         }
     }
@@ -93,7 +93,7 @@ pub async fn fetch_time(stack: &Stack<'_>, rx_buf: &mut [u8], rtc_device: &RtcDe
             .await
             .set_datetime(&datetime)
             .await
-            .expect("TODO: panic message");
+            .expect("Failed to update RTC time");
 
         let mut data = RTC_TIME.lock().await;
         *data = Some(datetime);

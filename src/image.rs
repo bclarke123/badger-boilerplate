@@ -3,9 +3,9 @@ use embedded_graphics::prelude::Point;
 use crate::state::CURRENT_IMAGE;
 
 static NUMBER_OF_IMAGES: u8 = 3;
-static FERRIS_IMG: &[u8] = include_bytes!("../../images/julian.bmp");
-static REPO_IMG: &[u8] = include_bytes!("../../images/repo.bmp");
-static MTRAS_LOGO: &[u8] = include_bytes!("../../images/mtras_logo.bmp");
+static FERRIS_IMG: &[u8] = include_bytes!("../images/julian.bmp");
+static REPO_IMG: &[u8] = include_bytes!("../images/repo.bmp");
+static MTRAS_LOGO: &[u8] = include_bytes!("../images/mtras_logo.bmp");
 
 pub enum DisplayImage {
     Ferris = 0,
@@ -15,6 +15,12 @@ pub enum DisplayImage {
 
 pub fn get_current_image() -> DisplayImage {
     DisplayImage::from_u8(CURRENT_IMAGE.load(core::sync::atomic::Ordering::Relaxed)).unwrap()
+}
+
+pub fn next() {
+    let current_image = CURRENT_IMAGE.load(core::sync::atomic::Ordering::Relaxed);
+    let new_image = DisplayImage::from_u8(current_image).unwrap().next();
+    CURRENT_IMAGE.store(new_image.as_u8(), core::sync::atomic::Ordering::Relaxed);
 }
 
 impl DisplayImage {

@@ -4,9 +4,11 @@ use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, mutex::Mutex, signal
 use serde::Deserialize;
 use time::PrimitiveDateTime;
 
-pub static POWER_MUTEX: Mutex<ThreadModeRawMutex, ()> = Mutex::new(());
-pub static RTC_TIME: Mutex<ThreadModeRawMutex, Option<PrimitiveDateTime>> = Mutex::new(None);
-pub static WEATHER: Mutex<ThreadModeRawMutex, Option<CurrentWeather>> = Mutex::new(None);
+use crate::MutexObj;
+
+pub static POWER_MUTEX: MutexObj<()> = Mutex::new(());
+pub static RTC_TIME: MutexObj<Option<PrimitiveDateTime>> = Mutex::new(None);
+pub static WEATHER: MutexObj<Option<CurrentWeather>> = Mutex::new(None);
 
 #[derive(Debug, Clone, Copy, PartialEq, defmt::Format)]
 pub enum Screen {
@@ -28,6 +30,7 @@ pub enum Button {
     Down,
 }
 pub static BUTTON_PRESSED: Signal<ThreadModeRawMutex, &'static Button> = Signal::new();
+pub static UPDATE_WEATHER: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
 #[derive(Deserialize, Copy, Clone)]
 pub struct CurrentWeather {
