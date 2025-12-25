@@ -6,8 +6,8 @@ use log::info;
 
 use crate::{
     RtcDevice, UserLed,
-    helpers::blink,
     http::{fetch_time, fetch_weather},
+    led,
     state::{DISPLAY_CHANGED, POWER_MUTEX, Screen, UPDATE_WEATHER},
 };
 
@@ -48,6 +48,27 @@ async fn connect(control: &mut Control<'_>, stack: &Stack<'_>) -> Result<(), ()>
     Ok(())
 }
 
+async fn sync(
+    rx_buffer: &mut [u8],
+    control: &mut Control<'static>,
+    stack: Stack<'static>,
+    rtc_device: &'static RtcDevice,
+) {
+    if connect(control, &stack).await.is_ok() {
+        let (time_buf, weather_buf) = rx_buffer.split_at_mut(4096);
+
+        join(
+            fetch_time(&stack, time_buf, rtc_device),
+            fetch_weather(&stack, weather_buf),
+        )
+        .await;
+
+        control.leave().await;
+
+        DISPLAY_CHANGED.signal(Screen::TopBar);
+    }
+}
+
 #[embassy_executor::task]
 pub async fn run(
     mut control: Control<'static>,
@@ -58,23 +79,13 @@ pub async fn run(
     let mut rx_buffer = [0; 8192];
 
     loop {
-        if connect(&mut control, &stack).await.is_ok() {
-            blink(user_led, 3).await;
+        select(
+            led::loop_breathe(user_led),
+            sync(&mut rx_buffer, &mut control, stack, rtc_device),
+        )
+        .await;
 
-            let (time_buf, weather_buf) = rx_buffer.split_at_mut(4096);
-
-            join(
-                fetch_time(&stack, time_buf, rtc_device),
-                fetch_weather(&stack, weather_buf),
-            )
-            .await;
-
-            control.leave().await;
-
-            blink(user_led, 4).await;
-
-            DISPLAY_CHANGED.signal(Screen::TopBar);
-        }
+        led::blink(user_led, 2).await;
 
         select(Timer::after_secs(3600), UPDATE_WEATHER.wait()).await;
     }

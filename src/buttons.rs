@@ -2,9 +2,8 @@ use embassy_rp::gpio::Input;
 use embassy_time::Timer;
 
 use crate::{
-    UserLed,
-    helpers::blink,
-    image,
+    UserLed, image,
+    led::blink,
     state::{BUTTON_PRESSED, Button, DISPLAY_CHANGED, Screen, UPDATE_WEATHER},
 };
 

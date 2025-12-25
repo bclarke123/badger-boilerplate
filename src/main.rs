@@ -6,12 +6,13 @@ mod display;
 mod helpers;
 mod http;
 mod image;
+mod led;
 mod state;
 mod time;
 mod wifi;
 
 use crate::buttons::{handle_presses, listen_to_button};
-use crate::helpers::blink;
+use crate::led::blink;
 use crate::state::{Button, DISPLAY_CHANGED, POWER_MUTEX, Screen};
 use crate::time::{check_trust_time, get_time, update_time};
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
@@ -23,6 +24,7 @@ use embassy_rp::gpio::Input;
 use embassy_rp::i2c::I2c;
 use embassy_rp::peripherals::{self, DMA_CH0, I2C0, PIO0, SPI0};
 use embassy_rp::pio::Pio;
+use embassy_rp::pwm::{Config, Pwm};
 use embassy_rp::spi::Spi;
 use embassy_rp::{bind_interrupts, gpio, i2c, pio, spi};
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, ThreadModeRawMutex};
@@ -44,7 +46,7 @@ type SharedI2c = I2cDevice<'static, ThreadModeRawMutex, AsyncI2c0>;
 type RtcDriver = PCF85063<SharedI2c>;
 
 pub type RtcDevice = MutexObj<RtcDriver>;
-pub type UserLed = MutexObj<Output<'static>>;
+pub type UserLed = MutexObj<Pwm<'static>>;
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => pio::InterruptHandler<peripherals::PIO0>;
@@ -62,8 +64,10 @@ async fn main(spawner: Spawner) {
     power_latch.set_high();
     core::mem::forget(power_latch); // Send this to space so it's not dropped and set low
 
-    let user_pin = Output::new(p.PIN_22, Level::High);
-    let user_led = USER_LED.init(Mutex::new(user_pin));
+    let config = Config::default();
+    let pwm = Pwm::new_output_a(p.PWM_SLICE3, p.PIN_22, config);
+
+    let user_led = USER_LED.init(Mutex::new(pwm));
     let rtc_device;
 
     blink(user_led, 1).await;
