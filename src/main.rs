@@ -72,6 +72,25 @@ async fn main(spawner: Spawner) {
 
     blink(user_led, 1).await;
 
+    // Button handlers
+    {
+        let btn_up = Input::new(p.PIN_15, Pull::Down);
+        let btn_down = Input::new(p.PIN_11, Pull::Down);
+        let btn_a = Input::new(p.PIN_12, Pull::Down);
+        let btn_b = Input::new(p.PIN_13, Pull::Down);
+        let btn_c = Input::new(p.PIN_14, Pull::Down);
+
+        spawner.spawn(handle_presses(user_led)).ok();
+
+        spawner.spawn(listen_to_button(btn_a, &Button::A)).ok();
+        spawner.spawn(listen_to_button(btn_b, &Button::B)).ok();
+        spawner.spawn(listen_to_button(btn_c, &Button::C)).ok();
+        spawner.spawn(listen_to_button(btn_up, &Button::Up)).ok();
+        spawner
+            .spawn(listen_to_button(btn_down, &Button::Down))
+            .ok();
+    }
+
     // I2C RTC
     {
         let config = embassy_rp::i2c::Config::default();
@@ -119,25 +138,6 @@ async fn main(spawner: Spawner) {
 
         DISPLAY_CHANGED.signal(Screen::Full);
         spawner.must_spawn(display::run(spi_bus, cs, dc, busy, reset));
-    }
-
-    // Button handlers
-    {
-        let btn_up = Input::new(p.PIN_15, Pull::Down);
-        let btn_down = Input::new(p.PIN_11, Pull::Down);
-        let btn_a = Input::new(p.PIN_12, Pull::Down);
-        let btn_b = Input::new(p.PIN_13, Pull::Down);
-        let btn_c = Input::new(p.PIN_14, Pull::Down);
-
-        spawner.spawn(handle_presses(user_led)).ok();
-
-        spawner.spawn(listen_to_button(btn_a, &Button::A)).ok();
-        spawner.spawn(listen_to_button(btn_b, &Button::B)).ok();
-        spawner.spawn(listen_to_button(btn_c, &Button::C)).ok();
-        spawner.spawn(listen_to_button(btn_up, &Button::Up)).ok();
-        spawner
-            .spawn(listen_to_button(btn_down, &Button::Down))
-            .ok();
     }
 
     // Screen refresh must complete before we set up wifi

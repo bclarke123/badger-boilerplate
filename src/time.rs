@@ -4,7 +4,7 @@ use portable_atomic::AtomicBool;
 
 use crate::{
     RtcDevice,
-    state::{DISPLAY_CHANGED, POWER_MUTEX, RTC_TIME, Screen},
+    state::{DISPLAY_CHANGED, RTC_TIME, Screen},
 };
 
 pub static TRUST_TIME: AtomicBool = AtomicBool::new(false);
@@ -14,7 +14,6 @@ pub async fn get_time(rtc_device: &'static RtcDevice) {
         return;
     }
 
-    let _guard = POWER_MUTEX.lock().await;
     let result = rtc_device.lock().await.get_datetime().await.ok();
     let mut data = RTC_TIME.lock().await;
     *data = result;

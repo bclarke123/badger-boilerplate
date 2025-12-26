@@ -2,7 +2,7 @@ use crate::image;
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice as AsyncSpiDevice;
 use embassy_rp::gpio;
 use embassy_rp::gpio::Input;
-use embassy_time::{Delay, Timer};
+use embassy_time::Delay;
 use embedded_graphics::{
     image::Image,
     mono_font::{MonoTextStyle, ascii::*},
@@ -36,6 +36,7 @@ pub async fn run(
 ) {
     let spi_dev = AsyncSpiDevice::new(spi_bus, cs);
     let mut display = Display::new(spi_dev, dc, busy, reset, Delay);
+    display.reset().await;
 
     loop {
         let to_update = DISPLAY_CHANGED.wait().await;
@@ -46,7 +47,6 @@ pub async fn run(
 async fn update_screen<SPI: SpiDevice>(display: &mut Display<SPI>, to_update: &Screen) {
     let _guard = POWER_MUTEX.lock().await;
     display.enable();
-    display.reset().await;
 
     match to_update {
         Screen::Full => {
@@ -56,8 +56,6 @@ async fn update_screen<SPI: SpiDevice>(display: &mut Display<SPI>, to_update: &S
             display.setup(LUT::Fast).await.ok();
         }
     }
-
-    Timer::after_millis(50).await;
 
     match to_update {
         Screen::Full => {
@@ -78,8 +76,6 @@ async fn update_screen<SPI: SpiDevice>(display: &mut Display<SPI>, to_update: &S
     }
 
     display.disable();
-
-    Timer::after_millis(50).await;
 }
 
 async fn draw_weather<SPI: SpiDevice>(display: &mut Display<SPI>, partial: bool) {
