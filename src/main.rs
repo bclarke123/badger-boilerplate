@@ -18,6 +18,7 @@ use crate::time::{check_trust_time, get_time, update_time};
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_executor::Spawner;
+use embassy_futures::join::join;
 use embassy_net::StackResources;
 use embassy_rp::clocks::RoscRng;
 use embassy_rp::gpio::Input;
@@ -29,7 +30,6 @@ use embassy_rp::spi::Spi;
 use embassy_rp::{bind_interrupts, gpio, i2c, pio, spi};
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, ThreadModeRawMutex};
 use embassy_sync::mutex::Mutex;
-use embassy_time::Timer;
 use gpio::{Level, Output, Pull};
 use pcf85063a::PCF85063;
 use static_cell::StaticCell;
@@ -142,9 +142,7 @@ async fn main(spawner: Spawner) {
 
     // Screen refresh must complete before we set up wifi
     {
-        Timer::after_millis(100).await;
-        let _guard = POWER_MUTEX.lock().await;
-        blink(user_led, 1).await;
+        let _ = join(blink(user_led, 1), POWER_MUTEX.lock()).await;
     }
 
     // Wifi driver and cyw43 setup
