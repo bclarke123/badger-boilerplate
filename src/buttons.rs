@@ -33,14 +33,19 @@ pub async fn handle_presses(user_led: &'static UserLed) -> ! {
 
                 DISPLAY_CHANGED.signal(Screen::Full);
             }
-            Button::C => {
+            Button::C => {}
+            Button::Down => {
                 blink(user_led, 1).await;
 
                 image::next();
                 DISPLAY_CHANGED.signal(Screen::Image);
             }
-            Button::Down => {}
-            Button::Up => {}
+            Button::Up => {
+                blink(user_led, 1).await;
+
+                image::prev();
+                DISPLAY_CHANGED.signal(Screen::Image);
+            }
         }
     }
 }

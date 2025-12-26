@@ -20,3 +20,13 @@ pub fn next() {
     let next = (current_image + 1) % IMAGES.len();
     CURRENT_IMAGE.store(next, Ordering::Relaxed);
 }
+
+pub fn prev() {
+    let current_image = CURRENT_IMAGE.load(Ordering::Relaxed);
+    let prev = (if current_image == 0 {
+        IMAGES.len()
+    } else {
+        current_image
+    }) - 1;
+    CURRENT_IMAGE.store(prev, Ordering::Relaxed);
+}
