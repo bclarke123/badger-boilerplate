@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+mod buttons;
 mod display;
 mod flash;
 mod helpers;
@@ -11,9 +12,10 @@ mod state;
 mod time;
 mod wifi;
 
+use crate::buttons::{handle_presses, listen_to_button};
 use crate::flash::FlashDriver;
 use crate::led::blink;
-use crate::state::{DISPLAY_CHANGED, POWER_MUTEX, Screen};
+use crate::state::{Button, DISPLAY_CHANGED, POWER_MUTEX, Screen};
 use crate::time::{check_trust_time, get_time, update_time};
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
@@ -71,18 +73,10 @@ async fn main(spawner: Spawner) {
     let mut is_rtc_alarm = false;
     let mut screen_refresh_type = Screen::None;
     let mut image_dir = 0;
+    let mut external_power = false;
 
     // Button handlers
     {
-        // spawner.spawn(handle_presses(user_led, flash_device)).ok();
-        // spawner.spawn(listen_to_button(btn_a, &Button::A)).ok();
-        // spawner.spawn(listen_to_button(btn_b, &Button::B)).ok();
-        // spawner.spawn(listen_to_button(btn_c, &Button::C)).ok();
-        // spawner.spawn(listen_to_button(btn_up, &Button::Up)).ok();
-        // spawner
-        //     .spawn(listen_to_button(btn_down, &Button::Down))
-        //     .ok();
-
         let mut up = Input::new(p.PIN_15, Pull::Down);
         let mut down = Input::new(p.PIN_11, Pull::Down);
         let mut a = Input::new(p.PIN_12, Pull::Down);
@@ -113,7 +107,19 @@ async fn main(spawner: Spawner) {
             screen_refresh_type = Screen::TopBar;
             c.wait_for_low().await;
         } else if rtc_alarm.is_high() {
+            // RTC wake
             is_rtc_alarm = true;
+        } else {
+            // We must be on external power
+
+            external_power = true;
+            sync_wifi = true;
+
+            spawner.spawn(listen_to_button(a, &Button::A)).ok();
+            spawner.spawn(listen_to_button(b, &Button::B)).ok();
+            spawner.spawn(listen_to_button(c, &Button::C)).ok();
+            spawner.spawn(listen_to_button(up, &Button::Up)).ok();
+            spawner.spawn(listen_to_button(down, &Button::Down)).ok();
         }
     }
 
@@ -143,6 +149,10 @@ async fn main(spawner: Spawner) {
         }
     }
 
+    if external_power {
+        spawner.spawn(handle_presses(user_led, flash_device)).ok();
+    }
+
     // I2C RTC
     {
         let config = embassy_rp::i2c::Config::default();
@@ -162,7 +172,18 @@ async fn main(spawner: Spawner) {
             let mut rtc = rtc_device.lock().await;
             rtc.disable_all_alarms().await.ok();
             rtc.clear_alarm_flag().await.ok();
-            screen_refresh_type = Screen::TopBar;
+
+            let now = rtc.get_datetime().await;
+
+            match now {
+                Ok(now) if now.minute() == 0 => {
+                    sync_wifi = true;
+                    screen_refresh_type = Screen::Full;
+                }
+                _ => {
+                    screen_refresh_type = Screen::TopBar;
+                }
+            }
         }
 
         spawner.spawn(update_time(rtc_device)).ok();
@@ -205,7 +226,10 @@ async fn main(spawner: Spawner) {
     }
 
     if !sync_wifi {
-        nighty_night(&mut power_latch, rtc_device).await;
+        if !external_power {
+            nighty_night(&mut power_latch, rtc_device).await;
+        }
+
         return;
     }
 
@@ -246,8 +270,22 @@ async fn main(spawner: Spawner) {
 
         spawner.must_spawn(net_task(netrunner));
 
-        wifi::run_once(control, stack, user_led, rtc_device, flash_device).await;
-        nighty_night(&mut power_latch, rtc_device).await;
+        if external_power {
+            spawner
+                .spawn(wifi::run(
+                    control,
+                    stack,
+                    user_led,
+                    rtc_device,
+                    flash_device,
+                ))
+                .ok();
+        } else {
+            wifi::run_once(control, stack, user_led, rtc_device, flash_device).await;
+            DISPLAY_CHANGED.signal(screen_refresh_type);
+
+            nighty_night(&mut power_latch, rtc_device).await;
+        }
     }
 }
 
