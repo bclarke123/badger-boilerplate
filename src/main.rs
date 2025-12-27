@@ -1,7 +1,6 @@
 #![no_std]
 #![no_main]
 
-mod buttons;
 mod display;
 mod flash;
 mod helpers;
@@ -33,7 +32,7 @@ use embassy_sync::blocking_mutex::raw::{NoopRawMutex, ThreadModeRawMutex};
 use embassy_sync::mutex::Mutex;
 use embassy_time::Timer;
 use gpio::{Level, Output, Pull};
-use pcf85063a::PCF85063;
+use pcf85063a::{Control, PCF85063};
 use static_cell::StaticCell;
 
 use {defmt_rtt as _, panic_reset as _};
@@ -69,6 +68,7 @@ async fn main(spawner: Spawner) {
     power_latch.set_high();
 
     let mut sync_wifi = false;
+    let mut is_rtc_alarm = false;
     let mut screen_refresh_type = Screen::None;
     let mut image_dir = 0;
 
@@ -88,6 +88,7 @@ async fn main(spawner: Spawner) {
         let mut a = Input::new(p.PIN_12, Pull::Down);
         let mut b = Input::new(p.PIN_13, Pull::Down);
         let mut c = Input::new(p.PIN_14, Pull::Down);
+        let rtc_alarm = Input::new(p.PIN_8, Pull::Down);
 
         if up.is_high() {
             // Up
@@ -111,6 +112,8 @@ async fn main(spawner: Spawner) {
             // C
             screen_refresh_type = Screen::TopBar;
             c.wait_for_low().await;
+        } else if rtc_alarm.is_high() {
+            is_rtc_alarm = true;
         }
     }
 
@@ -128,8 +131,14 @@ async fn main(spawner: Spawner) {
         join(flash::load_state(flash_device), blink(user_led, 1)).await;
 
         match image_dir {
-            -1 => image::prev(),
-            1 => image::next(),
+            -1 => {
+                image::prev();
+                flash::save_state(flash_device).await;
+            }
+            1 => {
+                image::next();
+                flash::save_state(flash_device).await;
+            }
             _ => {}
         }
     }
@@ -148,6 +157,13 @@ async fn main(spawner: Spawner) {
 
         check_trust_time(rtc_device).await;
         get_time(rtc_device).await;
+
+        if is_rtc_alarm {
+            let mut rtc = rtc_device.lock().await;
+            rtc.disable_all_alarms().await.ok();
+            rtc.clear_alarm_flag().await.ok();
+            screen_refresh_type = Screen::TopBar;
+        }
 
         spawner.spawn(update_time(rtc_device)).ok();
     }
@@ -189,7 +205,7 @@ async fn main(spawner: Spawner) {
     }
 
     if !sync_wifi {
-        nighty_night(&mut power_latch).await;
+        nighty_night(&mut power_latch, rtc_device).await;
         return;
     }
 
@@ -231,7 +247,7 @@ async fn main(spawner: Spawner) {
         spawner.must_spawn(net_task(netrunner));
 
         wifi::run_once(control, stack, user_led, rtc_device, flash_device).await;
-        nighty_night(&mut power_latch).await;
+        nighty_night(&mut power_latch, rtc_device).await;
     }
 }
 
@@ -247,9 +263,23 @@ async fn cyw43_task(
     runner.run().await
 }
 
-async fn nighty_night(power_latch: &mut Output<'static>) {
+async fn nighty_night(power_latch: &mut Output<'static>, rtc_device: &'static RtcDevice) {
     Timer::after_secs(3).await;
     DISPLAY_CHANGED.signal(Screen::Shutdown);
+
+    let mut rtc = rtc_device.lock().await;
+
+    let now = rtc.get_datetime().await.ok();
+    let sec = 60
+        - match now {
+            Some(when) => when.second(),
+            _ => 0,
+        };
+
+    rtc.set_alarm_seconds(sec).await.ok();
+    rtc.control_alarm_seconds(Control::On).await.ok();
+    rtc.control_alarm_interrupt(Control::On).await.ok();
+
     Timer::after_secs(1).await;
     power_latch.set_low();
 }

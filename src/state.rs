@@ -19,14 +19,14 @@ pub enum Screen {
 pub static DISPLAY_CHANGED: Signal<ThreadModeRawMutex, Screen> = Signal::new();
 pub static CURRENT_IMAGE: AtomicUsize = AtomicUsize::new(0);
 
-pub enum Button {
-    A,
-    B,
-    C,
-    Up,
-    Down,
-}
-pub static BUTTON_PRESSED: Signal<ThreadModeRawMutex, &'static Button> = Signal::new();
+// pub enum Button {
+//     A,
+//     B,
+//     C,
+//     Up,
+//     Down,
+// }
+// pub static BUTTON_PRESSED: Signal<ThreadModeRawMutex, &'static Button> = Signal::new();
 
 #[derive(Serialize, Deserialize, Copy, Clone)]
 pub struct CurrentWeather {
@@ -35,4 +35,4 @@ pub struct CurrentWeather {
     // pub is_day: u8,
 }
 pub static WEATHER: MutexObj<Option<CurrentWeather>> = Mutex::new(None);
-pub static UPDATE_WEATHER: Signal<ThreadModeRawMutex, ()> = Signal::new();
+// pub static UPDATE_WEATHER: Signal<ThreadModeRawMutex, ()> = Signal::new();

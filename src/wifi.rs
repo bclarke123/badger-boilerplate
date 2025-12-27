@@ -8,7 +8,7 @@ use crate::{
     FlashDevice, RtcDevice, UserLed,
     http::{fetch_time, fetch_weather},
     led,
-    state::{DISPLAY_CHANGED, POWER_MUTEX, Screen, UPDATE_WEATHER},
+    state::{DISPLAY_CHANGED, POWER_MUTEX, Screen},
 };
 
 pub static FW: &[u8] = include_bytes!("../cyw43-firmware/43439A0.bin");
@@ -67,35 +67,6 @@ async fn sync(
         control.leave().await;
 
         DISPLAY_CHANGED.signal(Screen::TopBar);
-    }
-}
-
-#[embassy_executor::task]
-pub async fn run(
-    mut control: Control<'static>,
-    stack: Stack<'static>,
-    user_led: &'static UserLed,
-    rtc_device: &'static RtcDevice,
-    flash_driver: &'static FlashDevice,
-) -> ! {
-    let mut rx_buffer = [0; 8192];
-
-    loop {
-        select(
-            led::loop_breathe(user_led),
-            sync(
-                &mut rx_buffer,
-                &mut control,
-                stack,
-                rtc_device,
-                flash_driver,
-            ),
-        )
-        .await;
-
-        led::blink(user_led, 2).await;
-
-        select(Timer::after_secs(3600), UPDATE_WEATHER.wait()).await;
     }
 }
 

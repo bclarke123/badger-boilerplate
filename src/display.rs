@@ -41,7 +41,18 @@ pub async fn run(
     loop {
         let to_update = DISPLAY_CHANGED.wait().await;
         update_screen(&mut display, &to_update).await;
+
+        if matches!(to_update, Screen::Shutdown) {
+            break;
+        }
     }
+
+    display.off().await.ok();
+
+    display
+        .command(uc8151::constants::Instruction::DSLP, &[0x01])
+        .await
+        .ok();
 }
 
 async fn update_screen<SPI: SpiDevice>(display: &mut Display<SPI>, to_update: &Screen) {
@@ -71,10 +82,6 @@ async fn update_screen<SPI: SpiDevice>(display: &mut Display<SPI>, to_update: &S
     }
 
     display.disable();
-
-    if matches!(to_update, Screen::Shutdown) {
-        display.off().await.ok();
-    }
 }
 
 async fn draw_weather<SPI: SpiDevice>(display: &mut Display<SPI>, partial: bool) {
