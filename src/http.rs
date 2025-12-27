@@ -119,10 +119,12 @@ pub async fn fetch_weather(
             weather.temperature, weather.weathercode
         );
 
-        let mut data = WEATHER.lock().await;
-        *data = Some(weather);
+        {
+            let mut data = WEATHER.lock().await;
+            *data = Some(weather);
+        }
 
-        flash::save_state(flash_device, &weather).await;
+        flash::save_state(flash_device).await;
     }
 }
 

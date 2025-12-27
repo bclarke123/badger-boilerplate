@@ -98,3 +98,27 @@ pub async fn run(
         select(Timer::after_secs(3600), UPDATE_WEATHER.wait()).await;
     }
 }
+
+pub async fn run_once(
+    mut control: Control<'static>,
+    stack: Stack<'static>,
+    user_led: &'static UserLed,
+    rtc_device: &'static RtcDevice,
+    flash_device: &'static FlashDevice,
+) {
+    let mut rx_buffer = [0; 8192];
+
+    select(
+        led::loop_breathe(user_led),
+        sync(
+            &mut rx_buffer,
+            &mut control,
+            stack,
+            rtc_device,
+            flash_device,
+        ),
+    )
+    .await;
+
+    led::blink(user_led, 2).await;
+}

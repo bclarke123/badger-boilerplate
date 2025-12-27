@@ -64,18 +64,17 @@ async fn update_screen<SPI: SpiDevice>(display: &mut Display<SPI>, to_update: &S
         Screen::TopBar => {
             draw_top_bar(display, true).await;
         }
-        // Screen::Weather => {
-        //     draw_weather(display, true).await;
-        // }
-        Screen::Time => {
-            draw_time(display, true).await;
-        }
         Screen::Image => {
             draw_current_image(display, true).await;
         }
+        _ => {}
     }
 
     display.disable();
+
+    if matches!(to_update, Screen::Shutdown) {
+        display.off().await.ok();
+    }
 }
 
 async fn draw_weather<SPI: SpiDevice>(display: &mut Display<SPI>, partial: bool) {

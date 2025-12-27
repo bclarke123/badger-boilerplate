@@ -12,10 +12,9 @@ mod state;
 mod time;
 mod wifi;
 
-use crate::buttons::{handle_presses, listen_to_button};
 use crate::flash::FlashDriver;
 use crate::led::blink;
-use crate::state::{Button, DISPLAY_CHANGED, POWER_MUTEX, Screen, WEATHER};
+use crate::state::{DISPLAY_CHANGED, POWER_MUTEX, Screen};
 use crate::time::{check_trust_time, get_time, update_time};
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
@@ -32,6 +31,7 @@ use embassy_rp::spi::Spi;
 use embassy_rp::{bind_interrupts, gpio, i2c, pio, spi};
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, ThreadModeRawMutex};
 use embassy_sync::mutex::Mutex;
+use embassy_time::Timer;
 use gpio::{Level, Output, Pull};
 use pcf85063a::PCF85063;
 use static_cell::StaticCell;
@@ -67,34 +67,71 @@ async fn main(spawner: Spawner) {
 
     let mut power_latch = Output::new(p.PIN_10, Level::High);
     power_latch.set_high();
-    core::mem::forget(power_latch); // Send this to space so it's not dropped and set low
+
+    let mut sync_wifi = false;
+    let mut screen_refresh_type = Screen::None;
+    let mut image_dir = 0;
+
+    // Button handlers
+    {
+        // spawner.spawn(handle_presses(user_led, flash_device)).ok();
+        // spawner.spawn(listen_to_button(btn_a, &Button::A)).ok();
+        // spawner.spawn(listen_to_button(btn_b, &Button::B)).ok();
+        // spawner.spawn(listen_to_button(btn_c, &Button::C)).ok();
+        // spawner.spawn(listen_to_button(btn_up, &Button::Up)).ok();
+        // spawner
+        //     .spawn(listen_to_button(btn_down, &Button::Down))
+        //     .ok();
+
+        let mut up = Input::new(p.PIN_15, Pull::Down);
+        let mut down = Input::new(p.PIN_11, Pull::Down);
+        let mut a = Input::new(p.PIN_12, Pull::Down);
+        let mut b = Input::new(p.PIN_13, Pull::Down);
+        let mut c = Input::new(p.PIN_14, Pull::Down);
+
+        if up.is_high() {
+            // Up
+            image_dir = -1;
+            screen_refresh_type = Screen::Image;
+            up.wait_for_low().await;
+        } else if down.is_high() {
+            // Down
+            image_dir = 1;
+            screen_refresh_type = Screen::Image;
+            down.wait_for_low().await;
+        } else if a.is_high() {
+            // A
+            sync_wifi = true;
+            a.wait_for_low().await;
+        } else if b.is_high() {
+            // B
+            screen_refresh_type = Screen::Full;
+            b.wait_for_low().await;
+        } else if c.is_high() {
+            // C
+            screen_refresh_type = Screen::TopBar;
+            c.wait_for_low().await;
+        }
+    }
 
     let config = Config::default();
     let pwm = Pwm::new_output_a(p.PWM_SLICE3, p.PIN_22, config);
-
     let user_led = USER_LED.init(Mutex::new(pwm));
     let rtc_device;
     let flash_device;
 
-    blink(user_led, 1).await;
-
-    // Button handlers
+    // Load most recent flash data
     {
-        let btn_up = Input::new(p.PIN_15, Pull::Down);
-        let btn_down = Input::new(p.PIN_11, Pull::Down);
-        let btn_a = Input::new(p.PIN_12, Pull::Down);
-        let btn_b = Input::new(p.PIN_13, Pull::Down);
-        let btn_c = Input::new(p.PIN_14, Pull::Down);
+        let flashdev = FlashDriver::new(p.FLASH, p.DMA_CH3);
+        flash_device = FLASH_DEVICE.init(Mutex::new(flashdev));
 
-        spawner.spawn(handle_presses(user_led)).ok();
+        join(flash::load_state(flash_device), blink(user_led, 1)).await;
 
-        spawner.spawn(listen_to_button(btn_a, &Button::A)).ok();
-        spawner.spawn(listen_to_button(btn_b, &Button::B)).ok();
-        spawner.spawn(listen_to_button(btn_c, &Button::C)).ok();
-        spawner.spawn(listen_to_button(btn_up, &Button::Up)).ok();
-        spawner
-            .spawn(listen_to_button(btn_down, &Button::Down))
-            .ok();
+        match image_dir {
+            -1 => image::prev(),
+            1 => image::next(),
+            _ => {}
+        }
     }
 
     // I2C RTC
@@ -113,14 +150,6 @@ async fn main(spawner: Spawner) {
         get_time(rtc_device).await;
 
         spawner.spawn(update_time(rtc_device)).ok();
-    }
-
-    // Load most recent weather data
-    {
-        let flashdev = FlashDriver::new(p.FLASH, p.DMA_CH3);
-        flash_device = FLASH_DEVICE.init(Mutex::new(flashdev));
-        let mut weather = WEATHER.lock().await;
-        *weather = flash::load_state(flash_device).await;
     }
 
     // SPI e-ink display
@@ -150,7 +179,7 @@ async fn main(spawner: Spawner) {
         static SPI_BUS: StaticCell<Spi0Bus> = StaticCell::new();
         let spi_bus = SPI_BUS.init(Mutex::new(spi));
 
-        DISPLAY_CHANGED.signal(Screen::Full);
+        DISPLAY_CHANGED.signal(screen_refresh_type);
         spawner.must_spawn(display::run(spi_bus, cs, dc, busy, reset));
     }
 
@@ -159,7 +188,12 @@ async fn main(spawner: Spawner) {
         let _ = join(blink(user_led, 1), POWER_MUTEX.lock()).await;
     }
 
-    // Wifi driver and cyw43 setup
+    if !sync_wifi {
+        nighty_night(&mut power_latch).await;
+        return;
+    }
+
+    // Connect to wifi and sync
     {
         let pwr = Output::new(p.PIN_23, Level::Low);
         let cs = Output::new(p.PIN_25, Level::High);
@@ -196,15 +230,8 @@ async fn main(spawner: Spawner) {
 
         spawner.must_spawn(net_task(netrunner));
 
-        spawner
-            .spawn(wifi::run(
-                control,
-                stack,
-                user_led,
-                rtc_device,
-                flash_device,
-            ))
-            .ok();
+        wifi::run_once(control, stack, user_led, rtc_device, flash_device).await;
+        nighty_night(&mut power_latch).await;
     }
 }
 
@@ -218,4 +245,11 @@ async fn cyw43_task(
     runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO0, 0, DMA_CH0>>,
 ) -> ! {
     runner.run().await
+}
+
+async fn nighty_night(power_latch: &mut Output<'static>) {
+    Timer::after_secs(3).await;
+    DISPLAY_CHANGED.signal(Screen::Shutdown);
+    Timer::after_secs(1).await;
+    power_latch.set_low();
 }

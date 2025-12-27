@@ -10,12 +10,11 @@ pub static RTC_TIME: MutexObj<Option<PrimitiveDateTime>> = Mutex::new(None);
 
 #[derive(Debug, Clone, Copy, PartialEq, defmt::Format)]
 pub enum Screen {
-    // Weather,
-    #[allow(dead_code)]
-    Time,
+    None,
     TopBar,
     Image,
     Full,
+    Shutdown,
 }
 pub static DISPLAY_CHANGED: Signal<ThreadModeRawMutex, Screen> = Signal::new();
 pub static CURRENT_IMAGE: AtomicUsize = AtomicUsize::new(0);

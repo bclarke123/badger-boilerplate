@@ -2,7 +2,7 @@ use embassy_rp::gpio::Input;
 use embassy_time::Timer;
 
 use crate::{
-    UserLed, image,
+    FlashDevice, UserLed, flash, image,
     led::blink,
     state::{BUTTON_PRESSED, Button, DISPLAY_CHANGED, Screen, UPDATE_WEATHER},
 };
@@ -22,7 +22,7 @@ pub async fn listen_to_button(mut button: Input<'static>, btn_type: &'static But
 }
 
 #[embassy_executor::task]
-pub async fn handle_presses(user_led: &'static UserLed) -> ! {
+pub async fn handle_presses(user_led: &'static UserLed, flash: &'static FlashDevice) -> ! {
     loop {
         let btn = BUTTON_PRESSED.wait().await;
 
@@ -38,12 +38,14 @@ pub async fn handle_presses(user_led: &'static UserLed) -> ! {
                 blink(user_led, 1).await;
 
                 image::next();
+                flash::save_state(flash).await;
                 DISPLAY_CHANGED.signal(Screen::Image);
             }
             Button::Up => {
                 blink(user_led, 1).await;
 
                 image::prev();
+                flash::save_state(flash).await;
                 DISPLAY_CHANGED.signal(Screen::Image);
             }
         }
