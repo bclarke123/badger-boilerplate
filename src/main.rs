@@ -82,53 +82,45 @@ async fn main(spawner: Spawner) {
     let mut image_dir = 0;
 
     // Button handlers
-    {
-        let mut up = Input::new(p.PIN_15, Pull::Down);
-        let mut down = Input::new(p.PIN_11, Pull::Down);
-        let mut a = Input::new(p.PIN_12, Pull::Down);
-        let mut b = Input::new(p.PIN_13, Pull::Down);
-        let mut c = Input::new(p.PIN_14, Pull::Down);
-        let rtc_alarm = Input::new(p.PIN_8, Pull::Down);
+    let mut up = Input::new(p.PIN_15, Pull::Down);
+    let mut down = Input::new(p.PIN_11, Pull::Down);
+    let mut a = Input::new(p.PIN_12, Pull::Down);
+    let mut b = Input::new(p.PIN_13, Pull::Down);
+    let mut c = Input::new(p.PIN_14, Pull::Down);
+    let rtc_alarm = Input::new(p.PIN_8, Pull::Down);
 
-        if up.is_high() {
-            // Up
-            image_dir = -1;
-            screen_refresh_type = Screen::Image;
-            up.wait_for_low().await;
-        } else if down.is_high() {
-            // Down
-            image_dir = 1;
-            screen_refresh_type = Screen::Image;
-            down.wait_for_low().await;
-        } else if a.is_high() {
-            // A
-            sync_wifi = true;
-            a.wait_for_low().await;
-        } else if b.is_high() {
-            // B
-            screen_refresh_type = Screen::Full;
-            b.wait_for_low().await;
-        } else if c.is_high() {
-            // C
-            screen_refresh_type = Screen::TopBar;
-            c.wait_for_low().await;
-        } else if rtc_alarm.is_high() {
-            // RTC wake
-            is_rtc_alarm = true;
-        } else {
-            // We must be on external power
-
-            external_power = true;
-            sync_wifi = true;
-
-            spawner.spawn(listen_to_button(a, &Button::A)).ok();
-            spawner.spawn(listen_to_button(b, &Button::B)).ok();
-            spawner.spawn(listen_to_button(c, &Button::C)).ok();
-            spawner.spawn(listen_to_button(up, &Button::Up)).ok();
-            spawner.spawn(listen_to_button(down, &Button::Down)).ok();
-        }
+    if up.is_high() {
+        // Up
+        image_dir = -1;
+        screen_refresh_type = Screen::Image;
+        up.wait_for_low().await;
+    } else if down.is_high() {
+        // Down
+        image_dir = 1;
+        screen_refresh_type = Screen::Image;
+        down.wait_for_low().await;
+    } else if a.is_high() {
+        // A
+        sync_wifi = true;
+        a.wait_for_low().await;
+    } else if b.is_high() {
+        // B
+        screen_refresh_type = Screen::Full;
+        b.wait_for_low().await;
+    } else if c.is_high() {
+        // C
+        screen_refresh_type = Screen::TopBar;
+        c.wait_for_low().await;
+    } else if rtc_alarm.is_high() {
+        // RTC wake
+        is_rtc_alarm = true;
+    } else {
+        // We must be on external power
+        external_power = true;
+        sync_wifi = true;
     }
 
+    // User LED
     {
         let config = Config::default();
         let pwm = Pwm::new_output_a(p.PWM_SLICE3, p.PIN_22, config);
@@ -141,10 +133,6 @@ async fn main(spawner: Spawner) {
         flash_device = FLASH_DEVICE.init(Mutex::new(flashdev));
 
         join(flash::load_state(flash_device), blink(user_led, 1)).await;
-    }
-
-    if external_power {
-        spawner.spawn(handle_presses(user_led, flash_device)).ok();
     }
 
     // I2C RTC
@@ -199,10 +187,18 @@ async fn main(spawner: Spawner) {
         rtc.write_ram_byte(CURRENT_IMAGE.load(Ordering::Relaxed) as u8)
             .await
             .ok();
+    }
 
-        if external_power {
-            spawner.spawn(update_time(rtc_device)).ok();
-        }
+    if external_power {
+        spawner.spawn(handle_presses(user_led, flash_device)).ok();
+
+        spawner.spawn(listen_to_button(a, &Button::A)).ok();
+        spawner.spawn(listen_to_button(b, &Button::B)).ok();
+        spawner.spawn(listen_to_button(c, &Button::C)).ok();
+        spawner.spawn(listen_to_button(up, &Button::Up)).ok();
+        spawner.spawn(listen_to_button(down, &Button::Down)).ok();
+
+        spawner.spawn(update_time(rtc_device)).ok();
     }
 
     // SPI e-ink display
