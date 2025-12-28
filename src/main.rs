@@ -71,11 +71,15 @@ async fn main(spawner: Spawner) {
     let mut power_latch = Output::new(p.PIN_10, Level::High);
     power_latch.set_high();
 
+    let rtc_device;
+    let flash_device;
+    let user_led;
+
     let mut sync_wifi = false;
     let mut is_rtc_alarm = false;
+    let mut external_power = false;
     let mut screen_refresh_type = Screen::None;
     let mut image_dir = 0;
-    let mut external_power = false;
 
     // Button handlers
     {
@@ -125,11 +129,11 @@ async fn main(spawner: Spawner) {
         }
     }
 
-    let config = Config::default();
-    let pwm = Pwm::new_output_a(p.PWM_SLICE3, p.PIN_22, config);
-    let user_led = USER_LED.init(Mutex::new(pwm));
-    let rtc_device;
-    let flash_device;
+    {
+        let config = Config::default();
+        let pwm = Pwm::new_output_a(p.PWM_SLICE3, p.PIN_22, config);
+        user_led = USER_LED.init(Mutex::new(pwm));
+    }
 
     // Load most recent flash data
     {
@@ -169,6 +173,7 @@ async fn main(spawner: Spawner) {
             match now {
                 Ok(now) if now.minute() == 0 => {
                     sync_wifi = true;
+                    screen_refresh_type = Screen::Full;
                 }
                 _ => {
                     screen_refresh_type = Screen::TopBar;
@@ -284,12 +289,12 @@ async fn main(spawner: Spawner) {
                 .ok();
         } else {
             wifi::run_once(control, stack, user_led, rtc_device, flash_device).await;
-
-            DISPLAY_CHANGED.signal(Screen::Full);
-            nighty_night(&mut power_latch, rtc_device).await;
         }
-    } else if !external_power {
+    }
+
+    if !external_power {
         DISPLAY_CHANGED.signal(screen_refresh_type);
+        Timer::after_secs(3).await;
         nighty_night(&mut power_latch, rtc_device).await;
     }
 }
@@ -307,12 +312,13 @@ async fn cyw43_task(
 }
 
 async fn nighty_night(power_latch: &mut Output<'static>, rtc_device: &'static RtcDevice) {
-    Timer::after_secs(3).await;
     DISPLAY_CHANGED.signal(Screen::Shutdown);
 
     let mut rtc = rtc_device.lock().await;
 
-    if let Ok(now) = rtc.get_datetime().await {
+    if let Ok(now) = rtc.get_datetime().await
+        && now.second() == 0
+    {
         Timer::after_millis(1000 - now.millisecond() as u64).await
     }
 
