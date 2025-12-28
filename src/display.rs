@@ -205,7 +205,7 @@ async fn draw_badge<SPI: SpiDevice>(display: &mut Display<SPI>) {
 fn get_display_time(time: PrimitiveDateTime) -> String<10> {
     let (hour, am) = match time.hour() {
         x if x > 12 => (x - 12, "PM"),
-        x if x == 12 => (12, "PM"),
+        12 => (12, "PM"),
         x => (x, "AM"),
     };
 
