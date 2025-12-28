@@ -58,6 +58,11 @@ static USER_LED: StaticCell<UserLed> = StaticCell::new();
 pub type FlashDevice = MutexObj<FlashDriver>;
 static FLASH_DEVICE: StaticCell<FlashDevice> = StaticCell::new();
 
+static I2C_BUS: StaticCell<I2c0Bus> = StaticCell::new();
+static SPI_BUS: StaticCell<Spi0Bus> = StaticCell::new();
+static STATE: StaticCell<cyw43::State> = StaticCell::new();
+static RESOURCES: StaticCell<StackResources<5>> = StaticCell::new();
+
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => pio::InterruptHandler<peripherals::PIO0>;
     I2C0_IRQ => i2c::InterruptHandler<peripherals::I2C0>;
@@ -138,7 +143,6 @@ async fn main(spawner: Spawner) {
     {
         let config = embassy_rp::i2c::Config::default();
         let i2c = i2c::I2c::new_async(p.I2C0, p.PIN_5, p.PIN_4, Irqs, config);
-        static I2C_BUS: StaticCell<I2c0Bus> = StaticCell::new();
         let i2c_bus = Mutex::new(i2c);
         let i2c_bus = I2C_BUS.init(i2c_bus);
 
@@ -204,13 +208,13 @@ async fn main(spawner: Spawner) {
             spi::Config::default(),
         );
 
-        static SPI_BUS: StaticCell<Spi0Bus> = StaticCell::new();
         let spi_bus = SPI_BUS.init(Mutex::new(spi));
 
         // If we're on mains, put something on the display
         if external_power {
             DISPLAY_CHANGED.signal(Screen::Full);
         }
+
         spawner.must_spawn(display::run(spi_bus, cs, dc, busy, reset));
     }
 
@@ -234,7 +238,7 @@ async fn main(spawner: Spawner) {
             p.PIN_29,
             p.DMA_CH0,
         );
-        static STATE: StaticCell<cyw43::State> = StaticCell::new();
+
         let state = STATE.init(cyw43::State::new());
         let (net_device, mut control, cywrunner) = cyw43::new(state, pwr, spi, wifi::FW).await;
         spawner.must_spawn(cyw43_task(cywrunner));
@@ -245,7 +249,6 @@ async fn main(spawner: Spawner) {
             .await;
 
         let config = embassy_net::Config::dhcpv4(Default::default());
-        static RESOURCES: StaticCell<StackResources<5>> = StaticCell::new();
 
         let (stack, netrunner) = embassy_net::new(
             net_device,
