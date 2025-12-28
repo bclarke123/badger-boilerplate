@@ -12,12 +12,10 @@ mod state;
 mod time;
 mod wifi;
 
-use core::sync::atomic::Ordering;
-
 use crate::buttons::{handle_presses, listen_to_button};
 use crate::flash::FlashDriver;
 use crate::led::blink;
-use crate::state::{Button, CURRENT_IMAGE, DISPLAY_CHANGED, POWER_MUTEX, Screen};
+use crate::state::{Button, DISPLAY_CHANGED, POWER_MUTEX, Screen};
 use crate::time::{check_trust_time, get_time, update_time};
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
@@ -102,6 +100,7 @@ async fn main(spawner: Spawner) {
     } else if a.is_high() {
         // A
         sync_wifi = true;
+        screen_refresh_type = Screen::TopBar;
         a.wait_for_low().await;
     } else if b.is_high() {
         // B
@@ -117,7 +116,6 @@ async fn main(spawner: Spawner) {
     } else {
         // We must be on external power
         external_power = true;
-        sync_wifi = true;
     }
 
     // User LED
@@ -169,10 +167,7 @@ async fn main(spawner: Spawner) {
             }
         }
 
-        CURRENT_IMAGE.store(
-            rtc.read_ram_byte().await.unwrap_or(0) as usize,
-            Ordering::Relaxed,
-        );
+        image::set(rtc.read_ram_byte().await.unwrap_or(0) as usize);
 
         match image_dir {
             -1 => {
@@ -184,11 +179,10 @@ async fn main(spawner: Spawner) {
             _ => {}
         }
 
-        rtc.write_ram_byte(CURRENT_IMAGE.load(Ordering::Relaxed) as u8)
-            .await
-            .ok();
+        rtc.write_ram_byte(image::get() as u8).await.ok();
     }
 
+    // Long running tasks if we're on mains power
     if external_power {
         spawner.spawn(handle_presses(user_led, flash_device)).ok();
 
@@ -228,6 +222,10 @@ async fn main(spawner: Spawner) {
         static SPI_BUS: StaticCell<Spi0Bus> = StaticCell::new();
         let spi_bus = SPI_BUS.init(Mutex::new(spi));
 
+        // If we're on mains, put something on the display
+        if external_power {
+            DISPLAY_CHANGED.signal(Screen::Full);
+        }
         spawner.must_spawn(display::run(spi_bus, cs, dc, busy, reset));
     }
 
@@ -237,7 +235,7 @@ async fn main(spawner: Spawner) {
     }
 
     // Connect to wifi and sync
-    if sync_wifi {
+    if sync_wifi || external_power {
         let pwr = Output::new(p.PIN_23, Level::Low);
         let cs = Output::new(p.PIN_25, Level::High);
         let mut pio = Pio::new(p.PIO0, Irqs);
