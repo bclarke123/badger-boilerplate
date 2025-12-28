@@ -152,9 +152,6 @@ async fn main(spawner: Spawner) {
         let mut rtc = rtc_device.lock().await;
 
         if is_rtc_alarm {
-            rtc.disable_all_alarms().await.ok();
-            rtc.clear_alarm_flag().await.ok();
-
             let now = rtc.get_datetime().await;
 
             match now {
@@ -168,6 +165,7 @@ async fn main(spawner: Spawner) {
             }
         }
 
+        // Pull image index from RTC ram byte, shift if we need, save it
         image::set(rtc.read_ram_byte().await.unwrap_or(0) as usize);
         image::shift(image_dir);
         rtc.write_ram_byte(image::get() as u8).await.ok();
@@ -191,14 +189,10 @@ async fn main(spawner: Spawner) {
         let miso = p.PIN_16;
         let mosi = p.PIN_19;
         let clk = p.PIN_18;
-        let dc = p.PIN_20;
-        let cs = p.PIN_17;
-        let busy = p.PIN_26;
+        let dc = Output::new(p.PIN_20, Level::Low);
+        let cs = Output::new(p.PIN_17, Level::High);
+        let busy = Input::new(p.PIN_26, Pull::Up);
         let reset = Output::new(p.PIN_21, Level::Low);
-
-        let dc = Output::new(dc, Level::Low);
-        let cs = Output::new(cs, Level::High);
-        let busy = Input::new(busy, Pull::Up);
 
         let spi = Spi::new(
             p.SPI0,
@@ -300,6 +294,9 @@ async fn nighty_night(power_latch: &mut Output<'static>, rtc_device: &'static Rt
     DISPLAY_CHANGED.signal(Screen::Shutdown);
 
     let mut rtc = rtc_device.lock().await;
+
+    rtc.disable_all_alarms().await.ok();
+    rtc.clear_alarm_flag().await.ok();
 
     if let Ok(now) = rtc.get_datetime().await
         && now.second() == 0
