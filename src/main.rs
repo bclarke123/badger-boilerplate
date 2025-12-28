@@ -12,10 +12,12 @@ mod state;
 mod time;
 mod wifi;
 
+use core::sync::atomic::Ordering;
+
 use crate::buttons::{handle_presses, listen_to_button};
 use crate::flash::FlashDriver;
 use crate::led::blink;
-use crate::state::{Button, DISPLAY_CHANGED, POWER_MUTEX, Screen};
+use crate::state::{Button, CURRENT_IMAGE, DISPLAY_CHANGED, POWER_MUTEX, Screen};
 use crate::time::{check_trust_time, get_time, update_time};
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
@@ -135,18 +137,6 @@ async fn main(spawner: Spawner) {
         flash_device = FLASH_DEVICE.init(Mutex::new(flashdev));
 
         join(flash::load_state(flash_device), blink(user_led, 1)).await;
-
-        match image_dir {
-            -1 => {
-                image::prev();
-                flash::save_state(flash_device).await;
-            }
-            1 => {
-                image::next();
-                flash::save_state(flash_device).await;
-            }
-            _ => {}
-        }
     }
 
     if external_power {
@@ -168,8 +158,9 @@ async fn main(spawner: Spawner) {
         check_trust_time(rtc_device).await;
         get_time(rtc_device).await;
 
+        let mut rtc = rtc_device.lock().await;
+
         if is_rtc_alarm {
-            let mut rtc = rtc_device.lock().await;
             rtc.disable_all_alarms().await.ok();
             rtc.clear_alarm_flag().await.ok();
 
@@ -178,7 +169,6 @@ async fn main(spawner: Spawner) {
             match now {
                 Ok(now) if now.minute() == 0 => {
                     sync_wifi = true;
-                    screen_refresh_type = Screen::Full;
                 }
                 _ => {
                     screen_refresh_type = Screen::TopBar;
@@ -186,7 +176,28 @@ async fn main(spawner: Spawner) {
             }
         }
 
-        spawner.spawn(update_time(rtc_device)).ok();
+        CURRENT_IMAGE.store(
+            rtc.read_ram_byte().await.unwrap_or(0) as usize,
+            Ordering::Relaxed,
+        );
+
+        match image_dir {
+            -1 => {
+                image::prev();
+            }
+            1 => {
+                image::next();
+            }
+            _ => {}
+        }
+
+        rtc.write_ram_byte(CURRENT_IMAGE.load(Ordering::Relaxed) as u8)
+            .await
+            .ok();
+
+        if external_power {
+            spawner.spawn(update_time(rtc_device)).ok();
+        }
     }
 
     // SPI e-ink display
@@ -216,7 +227,6 @@ async fn main(spawner: Spawner) {
         static SPI_BUS: StaticCell<Spi0Bus> = StaticCell::new();
         let spi_bus = SPI_BUS.init(Mutex::new(spi));
 
-        DISPLAY_CHANGED.signal(screen_refresh_type);
         spawner.must_spawn(display::run(spi_bus, cs, dc, busy, reset));
     }
 
@@ -225,16 +235,8 @@ async fn main(spawner: Spawner) {
         let _ = join(blink(user_led, 1), POWER_MUTEX.lock()).await;
     }
 
-    if !sync_wifi {
-        if !external_power {
-            nighty_night(&mut power_latch, rtc_device).await;
-        }
-
-        return;
-    }
-
     // Connect to wifi and sync
-    {
+    if sync_wifi {
         let pwr = Output::new(p.PIN_23, Level::Low);
         let cs = Output::new(p.PIN_25, Level::High);
         let mut pio = Pio::new(p.PIO0, Irqs);
@@ -282,10 +284,13 @@ async fn main(spawner: Spawner) {
                 .ok();
         } else {
             wifi::run_once(control, stack, user_led, rtc_device, flash_device).await;
-            DISPLAY_CHANGED.signal(screen_refresh_type);
 
+            DISPLAY_CHANGED.signal(Screen::Full);
             nighty_night(&mut power_latch, rtc_device).await;
         }
+    } else if !external_power {
+        DISPLAY_CHANGED.signal(screen_refresh_type);
+        nighty_night(&mut power_latch, rtc_device).await;
     }
 }
 
@@ -307,14 +312,11 @@ async fn nighty_night(power_latch: &mut Output<'static>, rtc_device: &'static Rt
 
     let mut rtc = rtc_device.lock().await;
 
-    let now = rtc.get_datetime().await.ok();
-    let sec = 60
-        - match now {
-            Some(when) => when.second(),
-            _ => 0,
-        };
+    if let Ok(now) = rtc.get_datetime().await {
+        Timer::after_millis(1000 - now.millisecond() as u64).await
+    }
 
-    rtc.set_alarm_seconds(sec).await.ok();
+    rtc.set_alarm_seconds(0).await.ok();
     rtc.control_alarm_seconds(Control::On).await.ok();
     rtc.control_alarm_interrupt(Control::On).await.ok();
 
