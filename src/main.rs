@@ -136,7 +136,7 @@ async fn main(spawner: Spawner) {
         let flashdev = FlashDriver::new(p.FLASH, p.DMA_CH3);
         flash_device = FLASH_DEVICE.init(Mutex::new(flashdev));
 
-        join(flash::load_state(flash_device), blink(user_led, 1)).await;
+        flash::load_state(flash_device).await;
     }
 
     // I2C RTC
