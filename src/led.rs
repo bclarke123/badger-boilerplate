@@ -26,23 +26,32 @@ pub async fn breathe(led: &UserLed, duration: Duration) {
 
     let step = top / steps;
 
-    let mut locked = led.lock().await;
-
     // Fade In
     for i in 0..steps {
         config.compare_a = i * step;
-        locked.set_config(&config);
+
+        {
+            led.lock().await.set_config(&config);
+        }
+
         Timer::after(delay).await;
     }
 
     // Fade Out
     for i in (0..steps).rev() {
         config.compare_a = i * step;
-        locked.set_config(&config);
+
+        {
+            led.lock().await.set_config(&config);
+        }
+
         Timer::after(delay).await;
     }
 
     // Ensure Off
     config.compare_a = 0;
-    locked.set_config(&config);
+
+    {
+        led.lock().await.set_config(&config);
+    }
 }
