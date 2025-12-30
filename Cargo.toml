@@ -102,6 +102,7 @@ time = { version = "0.3.17", default-features = false }
 pcf85063a = "0.1.1"
 embassy-futures = "0.1.2"
 embedded-storage-async = "0.4.1"
+u8g2-fonts = { version = "0.7.2", features = ["embedded_graphics_textstyle"] }
 
 [[bin]]
 name = "rusty_badger"
