@@ -11,7 +11,6 @@ Fully async, memory-safe, battery-friendly runtime for the Pimoroni Badger 2040 
 
 ## This project would not be possible without..
 * [fatfingers23](https://github.com/fatfingers23) for giving this project its starting point
-* [trvswgnr](https://github.com/trvswgnr) for their amazing ferris with a knife image. All i did was badly convert it to grayscale and scaled it down. 
 * embassy framework and their great [examples](https://github.com/embassy-rs/embassy/tree/main/examples/rp). Exactly zero chance I would have any of this written without this directory.
 * the [uc8151-rs](https://crates.io/crates/uc8151) crate. Would not be able to write to the e ink display without this great crate.
 * And every other single crate found in [Cargo.toml](./Cargo.toml). None of it would be possible with out those packages and maintainers.
