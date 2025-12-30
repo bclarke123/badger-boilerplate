@@ -69,6 +69,24 @@ async fn sync(
     }
 }
 
+async fn blink_sync(
+    rx_buffer: &mut [u8],
+    control: &mut Control<'static>,
+    stack: Stack<'static>,
+    user_led: &'static UserLed,
+    rtc_device: &'static RtcDevice,
+    flash_driver: &'static FlashDevice,
+) {
+    select(
+        led::loop_breathe(user_led),
+        with_timeout(
+            Duration::from_secs(30),
+            sync(rx_buffer, control, stack, rtc_device, flash_driver),
+        ),
+    )
+    .await;
+}
+
 #[embassy_executor::task]
 pub async fn run(
     mut control: Control<'static>,
@@ -80,18 +98,13 @@ pub async fn run(
     let mut rx_buffer = [0; 8192];
 
     loop {
-        select(
-            led::loop_breathe(user_led),
-            with_timeout(
-                Duration::from_secs(30),
-                sync(
-                    &mut rx_buffer,
-                    &mut control,
-                    stack,
-                    rtc_device,
-                    flash_driver,
-                ),
-            ),
+        blink_sync(
+            &mut rx_buffer,
+            &mut control,
+            stack,
+            user_led,
+            rtc_device,
+            flash_driver,
         )
         .await;
 
@@ -107,22 +120,17 @@ pub async fn run_once(
     stack: Stack<'static>,
     user_led: &'static UserLed,
     rtc_device: &'static RtcDevice,
-    flash_device: &'static FlashDevice,
+    flash_driver: &'static FlashDevice,
 ) {
     let mut rx_buffer = [0; 8192];
 
-    select(
-        led::loop_breathe(user_led),
-        with_timeout(
-            Duration::from_secs(30),
-            sync(
-                &mut rx_buffer,
-                &mut control,
-                stack,
-                rtc_device,
-                flash_device,
-            ),
-        ),
+    blink_sync(
+        &mut rx_buffer,
+        &mut control,
+        stack,
+        user_led,
+        rtc_device,
+        flash_driver,
     )
     .await;
 
