@@ -62,6 +62,6 @@ pub async fn load_state(flash: &'static FlashDevice) {
     if let Ok(postcard) = postcard::from_bytes::<Postcard>(&buf) {
         let mut weather = WEATHER.lock().await;
         *weather = postcard.weather;
-        CURRENT_IMAGE.store(postcard.image, core::sync::atomic::Ordering::Relaxed);
+        // CURRENT_IMAGE.store(postcard.image, core::sync::atomic::Ordering::Relaxed);
     }
 }
