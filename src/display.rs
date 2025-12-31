@@ -206,6 +206,7 @@ fn get_display_time(time: PrimitiveDateTime) -> String<10> {
     let (hour, am) = match time.hour() {
         x if x > 12 => (x - 12, "PM"),
         12 => (12, "PM"),
+        0 => (12, "AM"),
         x => (x, "AM"),
     };
 
