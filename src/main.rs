@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+mod battery;
 mod buttons;
 mod display;
 mod flash;
@@ -12,17 +13,19 @@ mod state;
 mod time;
 mod wifi;
 
+use crate::battery::{BatteryState, get_power_state};
 use crate::buttons::{handle_presses, listen_to_button};
 use crate::flash::FlashDriver;
 use crate::image::Shift;
 use crate::led::blink;
-use crate::state::{Button, DISPLAY_CHANGED, POWER_MUTEX, Screen};
+use crate::state::{Button, DISPLAY_CHANGED, POWER_INFO, POWER_MUTEX, Screen};
 use crate::time::{check_trust_time, get_time, update_time};
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
 use embassy_net::StackResources;
+use embassy_rp::adc;
 use embassy_rp::clocks::RoscRng;
 use embassy_rp::gpio::Input;
 use embassy_rp::i2c::I2c;
@@ -66,10 +69,14 @@ static RESOURCES: StaticCell<StackResources<5>> = StaticCell::new();
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => pio::InterruptHandler<peripherals::PIO0>;
     I2C0_IRQ => i2c::InterruptHandler<peripherals::I2C0>;
+    ADC_IRQ_FIFO => adc::InterruptHandler;
 });
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    get_power_state().await;
+    let external_power = matches!(*POWER_INFO.lock().await, Some(BatteryState::UsbPower));
+
     let p = embassy_rp::init(Default::default());
 
     let mut power_latch = Output::new(p.PIN_10, Level::High);
@@ -81,7 +88,6 @@ async fn main(spawner: Spawner) {
 
     let mut sync_wifi = false;
     let mut is_rtc_alarm = false;
-    let mut external_power = false;
     let mut screen_refresh_type = Screen::None;
     let mut image_dir = Shift::None;
 
@@ -119,9 +125,6 @@ async fn main(spawner: Spawner) {
     } else if rtc_alarm.is_high() {
         // RTC wake
         is_rtc_alarm = true;
-    } else {
-        // We must be on external power
-        external_power = true;
     }
 
     // User LED

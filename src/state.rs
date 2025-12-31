@@ -3,9 +3,11 @@ use portable_atomic::AtomicUsize;
 use serde::{Deserialize, Serialize};
 use time::PrimitiveDateTime;
 
-use crate::MutexObj;
+use crate::{MutexObj, battery::BatteryState};
 
 pub static POWER_MUTEX: MutexObj<()> = Mutex::new(());
+pub static POWER_INFO: MutexObj<Option<BatteryState>> = Mutex::new(None);
+
 pub static RTC_TIME: MutexObj<Option<PrimitiveDateTime>> = Mutex::new(None);
 
 #[derive(Debug, Clone, Copy, PartialEq, defmt::Format)]
