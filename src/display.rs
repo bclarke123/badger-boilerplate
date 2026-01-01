@@ -93,15 +93,24 @@ async fn draw_weather<SPI: SpiDevice>(display: &mut Display<SPI>, partial: bool)
         let data = *WEATHER.lock().await;
         if let Some(data) = data {
             let top_text: String<64> = easy_format::<64>(format_args!(
-                "{:.0}C | {}",
-                data.temperature,
-                weather_description(data.weathercode)
+                "{:.0}C | {:.0}%",
+                data.temperature, data.relative_humidity_2m
             ));
 
-            let text = Text::new(top_text.as_str(), Point::new(8, 16), character_style);
-            let rect = text.bounding_box();
-
+            let text = Text::new(top_text.as_str(), Point::new(8, 16), &character_style);
             text.draw(display).unwrap();
+
+            let text = Text::new(
+                weather_description(data.weathercode),
+                Point::new(0, 16),
+                &character_style,
+            );
+
+            let center = ((WIDTH / 2) as i32) - text.bounding_box().center().x;
+
+            text.translate(Point::new(center, 0)).draw(display).unwrap();
+
+            let rect = text.bounding_box();
 
             if partial {
                 display.partial_update(rect.try_into().unwrap()).await.ok();
@@ -132,7 +141,7 @@ async fn draw_time<SPI: SpiDevice>(display: &mut Display<SPI>, partial: bool) {
 
         let text = Text::new(
             str.as_str(),
-            Point::new((WIDTH - 92) as i32, 16),
+            Point::new((WIDTH - 62) as i32, 16),
             character_style,
         );
 
@@ -228,7 +237,7 @@ fn get_display_time(time: PrimitiveDateTime) -> String<64> {
         x => (x, "A"),
     };
 
-    easy_format::<64>(format_args!("| {}:{:02}{}", hour, time.minute(), am))
+    easy_format::<64>(format_args!("  {}:{:02}{}", hour, time.minute(), am))
 }
 
 fn weather_description(code: u8) -> &'static str {
