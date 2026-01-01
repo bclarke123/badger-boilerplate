@@ -74,13 +74,13 @@ bind_interrupts!(struct Irqs {
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    get_power_state().await;
-    let external_power = matches!(*POWER_INFO.lock().await, Some(BatteryState::UsbPower));
-
     let p = embassy_rp::init(Default::default());
 
     let mut power_latch = Output::new(p.PIN_10, Level::High);
     power_latch.set_high();
+
+    get_power_state().await;
+    let external_power = matches!(*POWER_INFO.lock().await, Some(BatteryState::UsbPower));
 
     let rtc_device;
     let flash_device;
