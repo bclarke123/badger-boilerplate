@@ -5,7 +5,6 @@ use embassy_rp::gpio::Input;
 use embassy_time::Delay;
 use embedded_graphics::{
     image::Image,
-    mono_font::{MonoTextStyle, ascii::*},
     pixelcolor::BinaryColor,
     prelude::*,
     primitives::{PrimitiveStyle, PrimitiveStyleBuilder, Rectangle},
@@ -16,6 +15,10 @@ use gpio::Output;
 use heapless::String;
 use time::PrimitiveDateTime;
 use tinybmp::Bmp;
+use u8g2_fonts::{
+    U8g2TextStyle,
+    fonts::{u8g2_font_battery19_tn, u8g2_font_lastapprenticebold_tr},
+};
 use uc8151::{HEIGHT, LUT, WIDTH, asynch::Uc8151};
 
 use crate::{
@@ -84,7 +87,7 @@ async fn update_screen<SPI: SpiDevice>(display: &mut Display<SPI>, to_update: &S
 }
 
 async fn draw_weather<SPI: SpiDevice>(display: &mut Display<SPI>, partial: bool) {
-    let character_style = MonoTextStyle::new(&FONT_9X18_BOLD, BinaryColor::Off);
+    let character_style = U8g2TextStyle::new(u8g2_font_lastapprenticebold_tr, BinaryColor::Off);
 
     {
         let data = *WEATHER.lock().await;
@@ -108,48 +111,56 @@ async fn draw_weather<SPI: SpiDevice>(display: &mut Display<SPI>, partial: bool)
 }
 
 async fn draw_time<SPI: SpiDevice>(display: &mut Display<SPI>, partial: bool) {
-    let character_style = MonoTextStyle::new(&FONT_9X18_BOLD, BinaryColor::Off);
+    let character_style = U8g2TextStyle::new(u8g2_font_lastapprenticebold_tr, BinaryColor::Off);
+    let battery_style = U8g2TextStyle::new(u8g2_font_battery19_tn, BinaryColor::Off);
 
-    {
-        let date = RTC_TIME.lock().await;
-        if let Some(when) = *date {
-            let batt = match *POWER_INFO.lock().await {
-                None => 101,
-                Some(BatteryState::Error) => 101,
-                Some(BatteryState::UsbPower) => 255,
-                Some(BatteryState::Battery(x)) => x,
-            };
+    if partial {
+        Rectangle::new(Point::new(192, 1), Size::new(88, 22))
+            .into_styled(
+                PrimitiveStyleBuilder::default()
+                    .stroke_color(BinaryColor::On)
+                    .fill_color(BinaryColor::On)
+                    .build(),
+            )
+            .draw(display)
+            .ok();
+    }
 
-            let str = get_display_time(when, batt);
+    let date = *RTC_TIME.lock().await;
+    if let Some(when) = date {
+        let str = get_display_time(when);
 
-            let text = Text::new(
-                str.as_str(),
-                Point::new((WIDTH - 110) as i32, 16),
-                character_style,
-            );
+        let text = Text::new(
+            str.as_str(),
+            Point::new((WIDTH - 92) as i32, 16),
+            character_style,
+        );
 
-            if partial {
-                Rectangle::new(Point::new(192, 1), Size::new(88, 22))
-                    .into_styled(
-                        PrimitiveStyleBuilder::default()
-                            .stroke_color(BinaryColor::On)
-                            .fill_color(BinaryColor::On)
-                            .build(),
-                    )
-                    .draw(display)
-                    .ok();
-            }
+        text.draw(display).unwrap();
+    }
 
-            text.draw(display).unwrap();
+    let batt = match *POWER_INFO.lock().await {
+        None => "7",
+        Some(BatteryState::Error) => "7",
+        Some(BatteryState::UsbPower) => "6",
+        Some(BatteryState::Battery(x)) if x > 90 => "5",
+        Some(BatteryState::Battery(x)) if x > 70 => "4",
+        Some(BatteryState::Battery(x)) if x > 50 => "3",
+        Some(BatteryState::Battery(x)) if x > 30 => "2",
+        Some(BatteryState::Battery(x)) if x > 10 => "1",
+        _ => "0",
+    };
 
-            if partial {
-                let bounds = Rectangle::new(Point::new(192, 0), Size::new(104, 24));
-                display
-                    .partial_update(bounds.try_into().unwrap())
-                    .await
-                    .ok();
-            }
-        };
+    let text = Text::new(batt, Point::new((WIDTH - 12) as i32, 21), battery_style);
+
+    text.draw(display).unwrap();
+
+    if partial {
+        let bounds = Rectangle::new(Point::new(192, 0), Size::new(104, 24));
+        display
+            .partial_update(bounds.try_into().unwrap())
+            .await
+            .ok();
     }
 }
 
@@ -209,7 +220,7 @@ async fn draw_badge<SPI: SpiDevice>(display: &mut Display<SPI>) {
     display.update().await.ok();
 }
 
-fn get_display_time(time: PrimitiveDateTime, batt: u8) -> String<64> {
+fn get_display_time(time: PrimitiveDateTime) -> String<64> {
     let (hour, am) = match time.hour() {
         x if x > 12 => (x - 12, "P"),
         12 => (12, "P"),
@@ -217,28 +228,14 @@ fn get_display_time(time: PrimitiveDateTime, batt: u8) -> String<64> {
         x => (x, "A"),
     };
 
-    let pct = easy_format::<4>(format_args!("{}%", batt));
-
-    let batt = match batt {
-        255 => "USB",
-        101 => "ERR",
-        _ => pct.as_str(),
-    };
-
-    easy_format::<64>(format_args!(
-        "| {}:{:02}{} {:02}",
-        hour,
-        time.minute(),
-        am,
-        batt
-    ))
+    easy_format::<64>(format_args!("| {}:{:02}{}", hour, time.minute(), am))
 }
 
 fn weather_description(code: u8) -> &'static str {
     match code {
         0 => "Clear",
         1 => "Mainly Clear",
-        2 => "Part Cloudy",
+        2 => "Partly Cloudy",
         3 => "Cloudy",
         45..=48 => "Fog",
         51..=55 => "Drizzle",
@@ -246,7 +243,7 @@ fn weather_description(code: u8) -> &'static str {
         61 => "Light Rain",
         63 => "Rain",
         65 => "Heavy Rain",
-        66 | 67 => "Frzing Rain",
+        66 | 67 => "Freezing Rain",
         71 => "Light Snow",
         73 => "Snow",
         75 => "Heavy Snow",
