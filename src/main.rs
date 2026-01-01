@@ -79,6 +79,10 @@ async fn main(spawner: Spawner) {
     let mut power_latch = Output::new(p.PIN_10, Level::High);
     power_latch.set_high();
 
+    // Set display reset low right away
+    let mut reset = Output::new(p.PIN_21, Level::Low);
+    reset.set_low();
+
     get_power_state().await;
     let external_power = matches!(*POWER_INFO.lock().await, Some(BatteryState::UsbPower));
 
@@ -199,7 +203,6 @@ async fn main(spawner: Spawner) {
         let dc = Output::new(p.PIN_20, Level::Low);
         let cs = Output::new(p.PIN_17, Level::High);
         let busy = Input::new(p.PIN_26, Pull::Up);
-        let reset = Output::new(p.PIN_21, Level::Low);
 
         let spi = Spi::new(
             p.SPI0,
