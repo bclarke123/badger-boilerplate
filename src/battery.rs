@@ -1,7 +1,8 @@
 use embassy_rp::{
     adc::{self, Adc, Channel},
-    gpio::Pull,
+    gpio::{Level, Output, Pull},
 };
+use embassy_time::Timer;
 
 use crate::{Irqs, state::POWER_INFO};
 
@@ -29,15 +30,28 @@ fn get_battery_state(voltage: f32) -> BatteryState {
 pub async fn get_power_state() {
     let p = unsafe { embassy_rp::Peripherals::steal() };
 
+    let mut wifi_switch = Output::new(p.PIN_25, Level::High);
+
     let mut adc = Adc::new(p.ADC, Irqs, adc::Config::default());
     let mut channel = Channel::new_pin(p.PIN_29, Pull::None);
 
-    let raw_val = adc.read(&mut channel).await;
+    let mut val = 0;
+    for _ in 0..10 {
+        match adc.read(&mut channel).await {
+            Ok(x) => val += x,
+            Err(_) => {
+                *POWER_INFO.lock().await = Some(BatteryState::Error);
+                return;
+            }
+        }
 
-    let ret = match raw_val {
-        Ok(val) => get_battery_state(((val as f32) / 4095.0) * 3.3 * 3.0),
-        Err(_) => BatteryState::Error,
-    };
+        Timer::after_millis(1).await;
+    }
 
+    val /= 10;
+
+    let ret = get_battery_state(((val as f32) / 4095.0) * 3.3 * 3.0);
     *POWER_INFO.lock().await = Some(ret);
+
+    wifi_switch.set_low();
 }
