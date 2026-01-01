@@ -1,4 +1,4 @@
-use crate::image;
+use crate::{battery::BatteryState, image, state::POWER_INFO};
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice as AsyncSpiDevice;
 use embassy_rp::gpio;
 use embassy_rp::gpio::Input;
@@ -90,7 +90,7 @@ async fn draw_weather<SPI: SpiDevice>(display: &mut Display<SPI>, partial: bool)
         let data = *WEATHER.lock().await;
         if let Some(data) = data {
             let top_text: String<64> = easy_format::<64>(format_args!(
-                "{}C | {}",
+                "{:.0}C | {}",
                 data.temperature,
                 weather_description(data.weathercode)
             ));
@@ -113,11 +113,18 @@ async fn draw_time<SPI: SpiDevice>(display: &mut Display<SPI>, partial: bool) {
     {
         let date = RTC_TIME.lock().await;
         if let Some(when) = *date {
-            let str = get_display_time(when);
+            let batt = match *POWER_INFO.lock().await {
+                None => 101,
+                Some(BatteryState::Error) => 101,
+                Some(BatteryState::UsbPower) => 255,
+                Some(BatteryState::Battery(x)) => x,
+            };
+
+            let str = get_display_time(when, batt);
 
             let text = Text::new(
                 str.as_str(),
-                Point::new((WIDTH - 98) as i32, 16),
+                Point::new((WIDTH - 110) as i32, 16),
                 character_style,
             );
 
@@ -202,15 +209,29 @@ async fn draw_badge<SPI: SpiDevice>(display: &mut Display<SPI>) {
     display.update().await.ok();
 }
 
-fn get_display_time(time: PrimitiveDateTime) -> String<10> {
+fn get_display_time(time: PrimitiveDateTime, batt: u8) -> String<64> {
     let (hour, am) = match time.hour() {
-        x if x > 12 => (x - 12, "PM"),
-        12 => (12, "PM"),
-        0 => (12, "AM"),
-        x => (x, "AM"),
+        x if x > 12 => (x - 12, "P"),
+        12 => (12, "P"),
+        0 => (12, "A"),
+        x => (x, "A"),
     };
 
-    easy_format::<10>(format_args!("| {:02}:{:02} {}", hour, time.minute(), am))
+    let pct = easy_format::<4>(format_args!("{}%", batt));
+
+    let batt = match batt {
+        255 => "USB",
+        101 => "ERR",
+        _ => pct.as_str(),
+    };
+
+    easy_format::<64>(format_args!(
+        "| {}:{:02}{} {:02}",
+        hour,
+        time.minute(),
+        am,
+        batt
+    ))
 }
 
 fn weather_description(code: u8) -> &'static str {
