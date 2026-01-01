@@ -97,12 +97,12 @@ async fn draw_weather<SPI: SpiDevice>(display: &mut Display<SPI>, partial: bool)
                 data.temperature, data.relative_humidity_2m
             ));
 
-            let text = Text::new(top_text.as_str(), Point::new(8, 16), &character_style);
+            let text = Text::new(top_text.as_str(), Point::new(8, 17), &character_style);
             text.draw(display).unwrap();
 
             let text = Text::new(
                 weather_description(data.weathercode),
-                Point::new(0, 16),
+                Point::new(0, 17),
                 &character_style,
             );
 
@@ -141,7 +141,7 @@ async fn draw_time<SPI: SpiDevice>(display: &mut Display<SPI>, partial: bool) {
 
         let text = Text::new(
             str.as_str(),
-            Point::new((WIDTH - 62) as i32, 16),
+            Point::new((WIDTH - 62) as i32, 17),
             character_style,
         );
 
@@ -160,7 +160,7 @@ async fn draw_time<SPI: SpiDevice>(display: &mut Display<SPI>, partial: bool) {
         _ => "0",
     };
 
-    let text = Text::new(batt, Point::new((WIDTH - 12) as i32, 21), battery_style);
+    let text = Text::new(batt, Point::new((WIDTH - 12) as i32, 20), battery_style);
 
     text.draw(display).unwrap();
 
