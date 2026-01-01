@@ -34,6 +34,7 @@ pub static BUTTON_PRESSED: Signal<ThreadModeRawMutex, &'static Button> = Signal:
 pub struct CurrentWeather {
     pub temperature: f32,
     pub weathercode: u8,
+    pub relative_humidity_2m: f32,
     // pub is_day: u8,
 }
 pub static WEATHER: MutexObj<Option<CurrentWeather>> = Mutex::new(None);
