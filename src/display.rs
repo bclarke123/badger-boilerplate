@@ -248,7 +248,7 @@ fn weather_description(code: u8) -> &'static str {
         3 => "Cloudy",
         45..=48 => "Fog",
         51..=55 => "Drizzle",
-        56 | 57 => "Frizzle",
+        56 | 57 => "Freezing Drizzle",
         61 => "Light Rain",
         63 => "Rain",
         65 => "Heavy Rain",
