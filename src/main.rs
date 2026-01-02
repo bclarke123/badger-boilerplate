@@ -319,4 +319,8 @@ async fn nighty_night(power_latch: &mut Output<'static>, rtc_device: &'static Rt
 
     Timer::after_secs(1).await;
     power_latch.set_low();
+
+    loop {
+        cortex_m::asm::wfi();
+    }
 }
