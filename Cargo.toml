@@ -3,8 +3,6 @@ name = "rusty_badger"
 version = "0.1.0"
 edition = "2024"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 embassy-embedded-hal = { version = "0.5.0", features = [
     "defmt",
@@ -29,9 +27,6 @@ embassy-rp = { version = "0.8.0", features = [
     "critical-section-impl",
     "rp2040",
 ] }
-#embassy-usb = { git = "https://github.com/embassy-rs/embassy.git", rev = "f0a86070512ad739641cee7d9fa39d63f5c8a9f6", features = [
-#    "defmt",
-#] }
 embassy-net = { version = "0.7.1", features = [
     "defmt",
     "tcp",
@@ -41,11 +36,6 @@ embassy-net = { version = "0.7.1", features = [
     "medium-ethernet",
     "dns",
 ] }
-embassy-net-wiznet = { version = "0.2.1", features = [
-    "defmt",
-] }
-#embassy-futures = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy.git" }
-#embassy-usb-logger = { version = "0.2.0", git = "https://github.com/embassy-rs/embassy.git" }
 cyw43 = { version = "0.5.0", features = [
     # "defmt",
     # "firmware-logs",
@@ -57,22 +47,13 @@ cyw43-pio = { version = "0.8.0", features = [
 
 defmt = "0.3"
 defmt-rtt = "0.4"
-fixed = "1.23.1"
-fixed-macro = "1.2"
 
-# for web request example
 reqwless = { version = "0.13.0", features = ["defmt"] }
 serde = { version = "1.0.203", default-features = false, features = ["derive"] }
 serde-json-core = "0.6"
 
-assign-resources = { git = "https://github.com/adamgreig/assign-resources", rev = "94ad10e2729afdf0fd5a77cd12e68409a982f58a" }
-
-# for assign resources example
-#cortex-m = { version = "0.7.6", features = ["critical-section-single-core"] }
 cortex-m = { version = "0.7.6", features = ["inline-asm"] }
 cortex-m-rt = "0.7.5"
-critical-section = "1.1"
-# panic-probe = { version = "1.0.0", features = ["print-defmt"] }
 panic-reset = "0.1.1"
 
 embedded-graphics = "0.8.1"
@@ -80,11 +61,10 @@ byte-slice-cast = { version = "1.2.0", default-features = false }
 
 heapless = { version = "0.8", features = ["serde"] }
 
-
-embedded-hal-1 = { package = "embedded-hal", version = "1.0" }
+embedded-hal = { version = "1.0" }
 embedded-hal-async = "1.0"
 embedded-hal-bus = { version = "0.1", features = ["async"] }
-embedded-io-async = { version = "0.6.1", features = ["defmt-03"] }
+# embedded-io-async = { version = "0.6.1", features = ["defmt-03"] }
 static_cell = "2"
 portable-atomic = { version = "1.5", features = ["critical-section"] }
 log = "0.4"
@@ -95,7 +75,6 @@ embedded-sdmmc = "0.7.0"
 uc8151 = { git = "https://github.com/9names/uc8151-rs.git", features = [
     "graphics",
 ] }
-embedded-text = "0.7.0"
 tinybmp = "0.5.0"
 postcard = "1.0.8"
 time = { version = "0.3.17", default-features = false }
