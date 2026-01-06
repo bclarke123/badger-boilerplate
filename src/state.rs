@@ -1,4 +1,5 @@
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, mutex::Mutex, signal::Signal};
+use heapless::String;
 use portable_atomic::AtomicUsize;
 use serde::{Deserialize, Serialize};
 use time::PrimitiveDateTime;
@@ -39,3 +40,5 @@ pub struct CurrentWeather {
 }
 pub static WEATHER: MutexObj<Option<CurrentWeather>> = Mutex::new(None);
 pub static UPDATE_WEATHER: Signal<ThreadModeRawMutex, ()> = Signal::new();
+
+pub static LABEL: MutexObj<String<64>> = Mutex::new(String::<64>::new());
