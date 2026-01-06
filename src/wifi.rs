@@ -13,6 +13,7 @@ use crate::{
 
 pub static FW: &[u8] = include_bytes!("../cyw43-firmware/43439A0.bin");
 pub static CLM: &[u8] = include_bytes!("../cyw43-firmware/43439A0_clm.bin");
+pub static BTFW: &[u8] = include_bytes!("../cyw43-firmware/43439A0_btfw.bin");
 
 static WIFI_SSID: &str = env!("WIFI_SSID");
 static WIFI_PASSWORD: &[u8] = include_bytes!("../.wifi");
