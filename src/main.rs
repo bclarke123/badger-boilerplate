@@ -2,6 +2,7 @@
 #![no_main]
 
 mod battery;
+mod bt;
 mod buttons;
 mod display;
 mod flash;
@@ -14,19 +15,20 @@ mod time;
 mod wifi;
 
 use crate::battery::{BatteryState, get_power_state};
+use crate::bt::CalendarInfo;
 use crate::buttons::{handle_presses, listen_to_button};
 use crate::flash::FlashDriver;
 use crate::image::Shift;
-use crate::led::blink;
-use crate::state::{Button, DISPLAY_CHANGED, POWER_INFO, POWER_MUTEX, Screen};
+use crate::led::{blink, loop_breathe};
+use crate::state::{Button, DISPLAY_CHANGED, LABEL, POWER_INFO, POWER_MUTEX, Screen};
 use crate::time::{check_trust_time, get_time, update_time};
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
+use embassy_futures::select::select;
 use embassy_net::StackResources;
 use embassy_rp::adc;
-use embassy_rp::clocks::RoscRng;
 use embassy_rp::gpio::Input;
 use embassy_rp::i2c::I2c;
 use embassy_rp::peripherals::{self, DMA_CH0, I2C0, PIO0, SPI0};
@@ -40,6 +42,7 @@ use embassy_time::Timer;
 use gpio::{Level, Output, Pull};
 use pcf85063a::{Control, PCF85063};
 use static_cell::StaticCell;
+use trouble_host::prelude::*;
 
 use {defmt_rtt as _, panic_reset as _};
 
@@ -64,7 +67,16 @@ static FLASH_DEVICE: StaticCell<FlashDevice> = StaticCell::new();
 static I2C_BUS: StaticCell<I2c0Bus> = StaticCell::new();
 static SPI_BUS: StaticCell<Spi0Bus> = StaticCell::new();
 static STATE: StaticCell<cyw43::State> = StaticCell::new();
-static RESOURCES: StaticCell<StackResources<5>> = StaticCell::new();
+
+const SERVICE_UUID: Uuid = Uuid::new_long([
+    0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0, 0x93, 0xF3, 0xA3, 0xB5, 0x01, 0x00, 0x40, 0x6E,
+]);
+const CHAR_UUID: Uuid = Uuid::new_long([
+    0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0, 0x93, 0xF3, 0xA3, 0xB5, 0x02, 0x00, 0x40, 0x6E,
+]);
+
+const CONNS: usize = 1; // Max simultaneous connections
+const L2CAP_CHANNELS: usize = 2; // L2CAP channels (2 is usually minimum for BLE)
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => pio::InterruptHandler<peripherals::PIO0>;
@@ -246,38 +258,93 @@ async fn main(spawner: Spawner) {
         );
 
         let state = STATE.init(cyw43::State::new());
-        let (net_device, mut control, cywrunner) = cyw43::new(state, pwr, spi, wifi::FW).await;
+        let (_net_device, bt_device, mut control, cywrunner) =
+            cyw43::new_with_bluetooth(state, pwr, spi, wifi::FW, wifi::BTFW).await;
+
         spawner.must_spawn(cyw43_task(cywrunner));
 
         control.init(wifi::CLM).await;
-        control
-            .set_power_management(cyw43::PowerManagementMode::PowerSave)
-            .await;
 
-        let config = embassy_net::Config::dhcpv4(Default::default());
+        let controller: ExternalController<_, 10> = ExternalController::new(bt_device);
 
-        let (stack, netrunner) = embassy_net::new(
-            net_device,
-            config,
-            RESOURCES.init(StackResources::new()),
-            RoscRng.next_u64(),
-        );
+        let mut resources = HostResources::<DefaultPacketPool, CONNS, L2CAP_CHANNELS>::new();
 
-        spawner.must_spawn(net_task(netrunner));
+        let address = Address::random([0x41, 0x5A, 0xE3, 0x1E, 0x83, 0xE7]);
+        let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
+        let Host {
+            mut peripheral,
+            runner,
+            ..
+        } = stack.build();
 
-        if external_power {
-            spawner
-                .spawn(wifi::run(
-                    control,
-                    stack,
-                    user_led,
-                    rtc_device,
-                    flash_device,
-                ))
-                .ok();
-        } else {
-            wifi::run_once(control, stack, user_led, rtc_device, flash_device).await;
-        }
+        let mut adv_data = [0; 31];
+        let adv_data_len = AdStructure::encode_slice(
+            &[
+                AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
+                AdStructure::CompleteLocalName(b"DoorSign"),
+            ],
+            &mut adv_data[..],
+        )
+        .unwrap();
+
+        let mut scan_data = [0; 31];
+        let scan_data_len = AdStructure::encode_slice(
+            &[AdStructure::CompleteLocalName(b"DoorSign")],
+            &mut scan_data[..],
+        )
+        .unwrap();
+
+        let _ = join(select(loop_breathe(user_led), ble_task(runner)), async {
+            loop {
+                let advertiser = peripheral
+                    .advertise(
+                        &Default::default(),
+                        Advertisement::ConnectableScannableUndirected {
+                            adv_data: &adv_data[..adv_data_len],
+                            scan_data: &scan_data[..scan_data_len],
+                        },
+                    )
+                    .await
+                    .unwrap();
+
+                let conn = advertiser.accept().await.unwrap();
+
+                const PAYLOAD_LEN: usize = 251;
+                const L2CAP_MTU: usize = 251;
+                let l2cap_channel_config = L2capChannelConfig {
+                    mtu: Some(PAYLOAD_LEN as u16 - 6),
+                    mps: Some(L2CAP_MTU as u16 - 4),
+                    ..Default::default()
+                };
+
+                let mut ch1 = L2capChannel::accept(&stack, &conn, &[0x0081], &l2cap_channel_config)
+                    .await
+                    .unwrap();
+
+                let mut rx = [0; PAYLOAD_LEN];
+                ch1.receive(&stack, &mut rx)
+                    .await
+                    .expect("L2CAP receive failed");
+
+                match serde_json_core::from_slice::<Option<CalendarInfo>>(&rx) {
+                    Ok((Some(info), _len)) => {
+                        let label = &mut *LABEL.lock().await;
+                        core::fmt::write(label, format_args!("{}", info.label)).ok();
+                    }
+                    Ok((None, _len)) => {
+                        let label = &mut *LABEL.lock().await;
+                        core::fmt::write(label, format_args!("No update")).ok();
+                    }
+                    Err(e) => {
+                        let label = &mut *LABEL.lock().await;
+                        core::fmt::write(label, format_args!("{}", e)).ok();
+                    }
+                }
+
+                DISPLAY_CHANGED.signal(Screen::Full);
+            }
+        })
+        .await;
     }
 
     if !external_power {
@@ -297,6 +364,14 @@ async fn cyw43_task(
     runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO0, 0, DMA_CH0>>,
 ) -> ! {
     runner.run().await
+}
+
+async fn ble_task<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) {
+    loop {
+        if let Err(e) = runner.run().await {
+            panic!("[ble_task] error: {:?}", e);
+        }
+    }
 }
 
 async fn nighty_night(power_latch: &mut Output<'static>, rtc_device: &'static RtcDevice) {
