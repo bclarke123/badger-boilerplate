@@ -1,4 +1,8 @@
-use crate::{battery::BatteryState, image, state::POWER_INFO};
+use crate::{
+    battery::BatteryState,
+    image,
+    state::{LABEL, POWER_INFO},
+};
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice as AsyncSpiDevice;
 use embassy_rp::gpio;
 use embassy_rp::gpio::Input;
@@ -90,32 +94,31 @@ async fn draw_weather<SPI: SpiDevice>(display: &mut Display<SPI>, partial: bool)
     let character_style = U8g2TextStyle::new(u8g2_font_lastapprenticebold_tr, BinaryColor::Off);
 
     {
-        let data = *WEATHER.lock().await;
-        if let Some(data) = data {
-            let top_text: String<64> = easy_format::<64>(format_args!(
-                "{:.0}C | {:.0}%",
-                data.temperature, data.relative_humidity_2m
-            ));
+        // let data = *WEATHER.lock().await;
+        // if let Some(data) = data {
+        // let top_text: String<64> = easy_format::<64>(format_args!(
+        //     "{:.0}C | {:.0}%",
+        //     data.temperature, data.relative_humidity_2m
+        // ));
+        //
 
-            let text = Text::new(top_text.as_str(), Point::new(8, 17), &character_style);
-            text.draw(display).unwrap();
+        let top_text = &*LABEL.lock().await;
 
-            let text = Text::new(
-                weather_description(data.weathercode),
-                Point::new(0, 17),
-                &character_style,
-            );
+        // let text = Text::new(top_text.as_str(), Point::new(8, 17), &character_style);
+        // text.draw(display).unwrap();
 
-            let center = ((WIDTH / 2) as i32) - text.bounding_box().center().x;
+        let text = Text::new(top_text.as_str(), Point::new(0, 17), &character_style);
 
-            text.translate(Point::new(center, 0)).draw(display).unwrap();
+        let center = ((WIDTH / 2) as i32) - text.bounding_box().center().x;
 
-            let rect = text.bounding_box();
+        text.translate(Point::new(center, 0)).draw(display).unwrap();
 
-            if partial {
-                display.partial_update(rect.try_into().unwrap()).await.ok();
-            }
+        let rect = text.bounding_box();
+
+        if partial {
+            display.partial_update(rect.try_into().unwrap()).await.ok();
         }
+        // }
     }
 }
 
