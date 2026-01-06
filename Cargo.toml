@@ -20,14 +20,14 @@ embassy-time = { version = "0.5.0", features = [
     "defmt",
     "defmt-timestamp-uptime",
 ] }
-embassy-rp = { version = "0.8.0", features = [
+embassy-rp = { version = "0.9.0", features = [
     "defmt",
     "unstable-pac",
     "time-driver",
     "critical-section-impl",
     "rp2040",
 ] }
-embassy-net = { version = "0.7.1", features = [
+embassy-net = { version = "0.8.0", features = [
     "defmt",
     "tcp",
     "udp",
@@ -36,19 +36,19 @@ embassy-net = { version = "0.7.1", features = [
     "medium-ethernet",
     "dns",
 ] }
-cyw43 = { version = "0.5.0", features = [
+cyw43 = { version = "0.6.0", features = [
     # "defmt",
     # "firmware-logs",
-    # "bluetooth",
+    "bluetooth",
 ] }
-cyw43-pio = { version = "0.8.0", features = [
+cyw43-pio = { version = "0.9.0", features = [
     "defmt",
 ] }
 
 defmt = "0.3"
 defmt-rtt = "0.4"
 
-reqwless = { version = "0.13.0", features = ["defmt"] }
+reqwless = { git = "https://github.com/drogue-iot/reqwless.git", features = ["defmt"] }
 serde = { version = "1.0.203", default-features = false, features = ["derive"] }
 serde-json-core = "0.6"
 
@@ -63,7 +63,7 @@ heapless = { version = "0.8", features = ["serde"] }
 
 embedded-hal = { version = "1.0" }
 embedded-hal-async = "1.0"
-embedded-hal-bus = { version = "0.1", features = ["async"] }
+embedded-hal-bus = { version = "0.3", features = ["async"] }
 # embedded-io-async = { version = "0.6.1", features = ["defmt-03"] }
 static_cell = "2"
 portable-atomic = { version = "1.5", features = ["critical-section"] }
@@ -82,6 +82,7 @@ pcf85063a = "0.1.1"
 embassy-futures = "0.1.2"
 embedded-storage-async = "0.4.1"
 u8g2-fonts = { version = "0.7.2", features = ["embedded_graphics_textstyle"] }
+trouble-host = "0.5.1"
 
 [[bin]]
 name = "rusty_badger"
