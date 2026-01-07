@@ -287,7 +287,7 @@ async fn main(spawner: Spawner) {
             loop {
                 match advertise("DoorSign", &mut peripheral, &server).await {
                     Ok(conn) => {
-                        gatt_events_task(&server, &conn).await.ok();
+                        gatt_events_task(&server, &conn, rtc_device).await.ok();
                     }
                     Err(e) => {
                         panic!("[adv] error: {:?}", e);

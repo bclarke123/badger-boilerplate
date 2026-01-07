@@ -2,7 +2,12 @@ use heapless::Vec;
 use serde::Deserialize;
 use trouble_host::prelude::*;
 
-use crate::state::{DISPLAY_CHANGED, LABEL, Screen};
+use crate::{
+    RtcDevice,
+    helpers::parse_rfc3339,
+    state::{DISPLAY_CHANGED, LABEL, Screen},
+    time::set_time,
+};
 
 // GATT Server definition
 #[gatt_server]
@@ -30,6 +35,12 @@ pub struct CalendarInfo<'a> {
     pub start_time: [u8; 2],
     pub duration: u8,
     pub label: &'a str,
+}
+
+#[derive(Deserialize)]
+pub struct DisplayRequest<'a> {
+    current_time: &'a str,
+    calendar_info: CalendarInfo<'a>,
 }
 
 /// Create an advertiser to use to connect to a BLE Central, and wait for it to connect.
@@ -62,6 +73,7 @@ pub async fn advertise<'values, 'server, C: Controller>(
 pub async fn gatt_events_task<P: PacketPool>(
     server: &Server<'_>,
     conn: &GattConnection<'_, '_, P>,
+    rtc_device: &'static RtcDevice,
 ) -> Result<(), Error> {
     let status = &server.display_service.status;
     loop {
@@ -72,7 +84,7 @@ pub async fn gatt_events_task<P: PacketPool>(
                     GattEvent::Write(event) => {
                         if event.handle() == status.handle {
                             let value = server.get(status).ok();
-                            update_from_bytes(value).await;
+                            update_from_bytes(value, &rtc_device).await;
                         }
                     }
                     _ => {}
@@ -91,12 +103,15 @@ pub async fn gatt_events_task<P: PacketPool>(
     Ok(())
 }
 
-async fn update_from_bytes(bytes: Option<Vec<u8, 512>>) {
+async fn update_from_bytes(bytes: Option<Vec<u8, 512>>, rtc_device: &'static RtcDevice) {
     if let Some(bytes) = bytes {
-        if let Ok((info, _bytes)) = serde_json_core::from_slice::<CalendarInfo>(&bytes) {
+        if let Ok((info, _bytes)) = serde_json_core::from_slice::<DisplayRequest>(&bytes) {
             let label = &mut *LABEL.lock().await;
             label.clear();
-            core::fmt::write(label, format_args!("{}", info.label)).ok();
+            core::fmt::write(label, format_args!("{}", info.calendar_info.label)).ok();
+
+            let time = parse_rfc3339(info.current_time);
+            set_time(rtc_device, time).await;
 
             DISPLAY_CHANGED.signal(Screen::Full);
         }

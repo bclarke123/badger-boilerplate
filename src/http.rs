@@ -9,6 +9,7 @@ use reqwless::request::{Method, RequestBuilder};
 use serde::Deserialize;
 use time::{Date, Month, PrimitiveDateTime, Time};
 
+use crate::helpers::parse_rfc3339;
 use crate::state::{CurrentWeather, POWER_MUTEX, WEATHER};
 use crate::time::set_time;
 use crate::{FlashDevice, RtcDevice, flash};
@@ -116,32 +117,14 @@ pub async fn fetch_weather(
 }
 
 #[derive(Deserialize)]
-struct TimeApiResponse<'a> {
-    datetime: &'a str,
+pub struct TimeApiResponse<'a> {
+    pub datetime: &'a str,
 }
 
 impl<'a> From<TimeApiResponse<'a>> for PrimitiveDateTime {
     fn from(response: TimeApiResponse) -> Self {
         info!("Datetime: {:?}", response.datetime);
-        //split at T
-        let datetime = response.datetime.split('T').collect::<Vec<&str, 2>>();
-        //split at -
-        let date = datetime[0].split('-').collect::<Vec<&str, 3>>();
-        let year = date[0].parse::<i32>().unwrap();
-        let month = date[1].parse::<u8>().unwrap();
-        let day = date[2].parse::<u8>().unwrap();
-        //split at :
-        let time = datetime[1].split(':').collect::<Vec<&str, 4>>();
-        let hour = time[0].parse::<u8>().unwrap();
-        let minute = time[1].parse::<u8>().unwrap();
-        //split at .
-        let second_split = time[2].split('.').collect::<Vec<&str, 2>>();
-        let second = second_split[0].parse::<u8>().unwrap();
-
-        let date = Date::from_calendar_date(year, Month::try_from(month).unwrap(), day).unwrap();
-        let time = Time::from_hms(hour, minute, second).unwrap();
-
-        PrimitiveDateTime::new(date, time)
+        parse_rfc3339(response.datetime)
     }
 }
 
