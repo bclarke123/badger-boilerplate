@@ -15,7 +15,7 @@ mod time;
 mod wifi;
 
 use crate::battery::{BatteryState, get_power_state};
-use crate::bt::CalendarInfo;
+use crate::bt::{CalendarInfo, Server, advertise, gatt_events_task};
 use crate::buttons::{handle_presses, listen_to_button};
 use crate::flash::FlashDriver;
 use crate::image::Shift;
@@ -277,71 +277,22 @@ async fn main(spawner: Spawner) {
             ..
         } = stack.build();
 
-        let mut adv_data = [0; 31];
-        let adv_data_len = AdStructure::encode_slice(
-            &[
-                AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-                AdStructure::CompleteLocalName(b"DoorSign"),
-            ],
-            &mut adv_data[..],
-        )
-        .unwrap();
-
-        let mut scan_data = [0; 31];
-        let scan_data_len = AdStructure::encode_slice(
-            &[AdStructure::CompleteLocalName(b"DoorSign")],
-            &mut scan_data[..],
-        )
+        let server = Server::new_with_config(GapConfig::Peripheral(PeripheralConfig {
+            name: "DoorSign",
+            appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
+        }))
         .unwrap();
 
         let _ = join(select(loop_breathe(user_led), ble_task(runner)), async {
             loop {
-                let advertiser = peripheral
-                    .advertise(
-                        &Default::default(),
-                        Advertisement::ConnectableScannableUndirected {
-                            adv_data: &adv_data[..adv_data_len],
-                            scan_data: &scan_data[..scan_data_len],
-                        },
-                    )
-                    .await
-                    .unwrap();
-
-                let conn = advertiser.accept().await.unwrap();
-
-                const PAYLOAD_LEN: usize = 251;
-                const L2CAP_MTU: usize = 251;
-                let l2cap_channel_config = L2capChannelConfig {
-                    mtu: Some(PAYLOAD_LEN as u16 - 6),
-                    mps: Some(L2CAP_MTU as u16 - 4),
-                    ..Default::default()
-                };
-
-                let mut ch1 = L2capChannel::accept(&stack, &conn, &[0x0081], &l2cap_channel_config)
-                    .await
-                    .unwrap();
-
-                let mut rx = [0; PAYLOAD_LEN];
-                ch1.receive(&stack, &mut rx)
-                    .await
-                    .expect("L2CAP receive failed");
-
-                match serde_json_core::from_slice::<Option<CalendarInfo>>(&rx) {
-                    Ok((Some(info), _len)) => {
-                        let label = &mut *LABEL.lock().await;
-                        core::fmt::write(label, format_args!("{}", info.label)).ok();
-                    }
-                    Ok((None, _len)) => {
-                        let label = &mut *LABEL.lock().await;
-                        core::fmt::write(label, format_args!("No update")).ok();
+                match advertise("DoorSign", &mut peripheral, &server).await {
+                    Ok(conn) => {
+                        gatt_events_task(&server, &conn).await.ok();
                     }
                     Err(e) => {
-                        let label = &mut *LABEL.lock().await;
-                        core::fmt::write(label, format_args!("{}", e)).ok();
+                        panic!("[adv] error: {:?}", e);
                     }
                 }
-
-                DISPLAY_CHANGED.signal(Screen::Full);
             }
         })
         .await;
